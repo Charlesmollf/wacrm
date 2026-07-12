@@ -57,6 +57,28 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /**
+   * Set when the customer taps a quick-reply button on a TEMPLATE
+   * message we sent. Distinct from `interactive` (which is for
+   * interactive button/list messages). Meta delivers the visible
+   * label in `button.text`.
+   */
+  button?: { text?: string; payload?: string }
+  /**
+   * Set when the customer places an order from our WhatsApp product
+   * catalog. `product_items` lists each SKU (product_retailer_id),
+   * quantity and unit price so we can show what was ordered.
+   */
+  order?: {
+    catalog_id?: string
+    text?: string
+    product_items?: Array<{
+      product_retailer_id: string
+      quantity: number
+      item_price: number
+      currency: string
+    }>
+  }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
 }
@@ -653,7 +675,7 @@ async function processMessage(
     ? message.type
     : message.type === 'sticker'
       ? 'image'   // stickers are images
-      : 'text'    // reaction, unknown → text fallback
+      : 'text'    // reaction, button, order, unknown → text fallback
 
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where
@@ -961,6 +983,37 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'button':
+      // Quick-reply button tap on a TEMPLATE message we sent. Meta
+      // delivers the visible label in `button.text` (e.g. "Comprar
+      // Africa"). Show it so the inbox reads legibly instead of
+      // "[Unsupported message type: button]".
+      return { ...empty, contentText: message.button?.text || '[Botón]' }
+
+    case 'order': {
+      // Catalog order — the customer built a cart from our WhatsApp
+      // product catalog and sent it. Summarize the items so the agent
+      // and the AI can see exactly what was ordered.
+      const order = message.order
+      const items = order?.product_items ?? []
+      if (items.length === 0) {
+        return { ...empty, contentText: order?.text || '🛒 Pedido del catálogo' }
+      }
+      const currency = items[0]?.currency || ''
+      let total = 0
+      const lines = items.map((it) => {
+        total += (it.item_price || 0) * (it.quantity || 0)
+        return `• ${it.quantity}x ${it.product_retailer_id} — ${currency} ${it.item_price}`
+      })
+      const header = `🛒 Pedido del catálogo (${items.length} ${items.length === 1 ? 'producto' : 'productos'}):`
+      const footer = `Total: ${currency} ${total}`
+      const note = order?.text ? `\n${order.text}` : ''
+      return {
+        ...empty,
+        contentText: `${header}\n${lines.join('\n')}\n${footer}${note}`,
+      }
     }
 
     default:
