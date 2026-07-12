@@ -12,6 +12,7 @@ import type {
   DealStatus,
   PipelineStage,
   Profile,
+  Tag,
 } from "@/types";
 import {
   Sheet,
@@ -70,6 +71,9 @@ export function DealForm({
   const [address, setAddress] = useState("");
   const [nit, setNit] = useState("");
   const [comboHistory, setComboHistory] = useState("");
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [contactTagIds, setContactTagIds] = useState<string[]>([]);
+  const [savingTags, setSavingTags] = useState(false);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -127,18 +131,43 @@ export function DealForm({
     if (!open) return;
     let cancelled = false;
     (async () => {
-      const [c, p] = await Promise.all([
+      const [c, p, tg] = await Promise.all([
         supabase.from("contacts").select("*").order("name"),
         supabase.from("profiles").select("*").order("full_name"),
+        supabase.from("tags").select("*").order("name"),
       ]);
       if (cancelled) return;
       setContacts((c.data ?? []) as Contact[]);
       setProfiles((p.data ?? []) as Profile[]);
+      setAllTags((tg.data ?? []) as Tag[]);
     })();
     return () => {
       cancelled = true;
     };
   }, [open, supabase]);
+
+  // Load the tags currently applied to the selected contact so we can
+  // show them checked. Tags live on the contact (contact_tags), so editing
+  // them here updates the contact everywhere (inbox, contact card).
+  useEffect(() => {
+    if (!open || !contactId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setContactTagIds([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("contact_tags")
+        .select("tag_id")
+        .eq("contact_id", contactId);
+      if (cancelled) return;
+      setContactTagIds(((data ?? []) as { tag_id: string }[]).map((r) => r.tag_id));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, contactId, supabase]);
 
   // Fetch linked conversation for the selected contact (newest open one).
   // Clearing on no-selection is sync with prop state; the populated
@@ -165,6 +194,36 @@ export function DealForm({
       cancelled = true;
     };
   }, [open, contactId, supabase]);
+
+  async function toggleTag(tagId: string) {
+    if (!contactId) return;
+    setSavingTags(true);
+    const isSelected = contactTagIds.includes(tagId);
+    if (isSelected) {
+      const { error } = await supabase
+        .from("contact_tags")
+        .delete()
+        .eq("contact_id", contactId)
+        .eq("tag_id", tagId);
+      if (!error) {
+        setContactTagIds((prev) => prev.filter((id) => id !== tagId));
+        onSaved();
+      } else {
+        toast.error(t("toastFailedSave"));
+      }
+    } else {
+      const { error } = await supabase
+        .from("contact_tags")
+        .insert({ contact_id: contactId, tag_id: tagId });
+      if (!error) {
+        setContactTagIds((prev) => [...prev, tagId]);
+        onSaved();
+      } else {
+        toast.error(t("toastFailedSave"));
+      }
+    }
+    setSavingTags(false);
+  }
 
   async function handleSave() {
     if (!title.trim() || !contactId || !stageId) {
@@ -327,6 +386,43 @@ export function DealForm({
                 </Link>
               )}
             </div>
+
+            {contactId && (
+              <div className="grid gap-2">
+                <Label className="text-muted-foreground">Etiquetas</Label>
+                {allTags.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No hay etiquetas. Créalas en Ajustes → Campos y etiquetas.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {allTags.map((tag) => {
+                      const selected = contactTagIds.includes(tag.id);
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => toggleTag(tag.id)}
+                          disabled={savingTags}
+                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all ${
+                            selected
+                              ? "ring-2 ring-primary ring-offset-1 ring-offset-border"
+                              : "opacity-50 hover:opacity-80"
+                          }`}
+                          style={{
+                            backgroundColor: tag.color + "20",
+                            color: tag.color,
+                          }}
+                        >
+                          {selected && <Check className="mr-1 h-3 w-3" />}
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-[1fr_110px] gap-3">
               <div className="grid gap-2">

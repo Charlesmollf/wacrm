@@ -124,6 +124,20 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         </div>
       )}
 
+      {deal.contact?.tags && deal.contact.tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {deal.contact.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{ backgroundColor: tag.color + "20", color: tag.color }}
+            >
+              {tag.name}
+            </span>
+          ))}
+        </div>
+      )}
+
       {assigneeLabel && (
         <div className="mt-2 flex items-center justify-end">
           <span
