@@ -369,6 +369,11 @@ export interface Deal {
   value: number;
   currency?: string;
   notes?: string;
+  /** Order operational fields (migration 037). Nullable; filled by
+   *  the user today, by the bot in a later step. */
+  payment_method?: string | null;
+  payment_status?: string | null;
+  grind?: string | null;
   expected_close_date?: string;
   status?: DealStatus;
   created_at: string;
