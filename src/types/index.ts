@@ -374,6 +374,10 @@ export interface Deal {
   payment_method?: string | null;
   payment_status?: string | null;
   grind?: string | null;
+  /** Lead detail surfaced on the card (migration 038). */
+  address?: string | null;
+  nit?: string | null;
+  combo_history?: string | null;
   expected_close_date?: string;
   status?: DealStatus;
   created_at: string;
