@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import { TagMultiSelect } from "@/components/shared/tag-multiselect";
 import {
   Phone,
   Mail,
@@ -15,6 +16,7 @@ import {
   DollarSign,
   StickyNote,
   Plus,
+  ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -34,6 +36,14 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  // Editable order detail — mirrors the most-recent deal for this contact.
+  const [pMethod, setPMethod] = useState("");
+  const [pStatus, setPStatus] = useState("");
+  const [grind, setGrind] = useState("");
+  const [address, setAddress] = useState("");
+  const [nit, setNit] = useState("");
+  const [combos, setCombos] = useState("");
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -43,7 +53,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     const supabase = createClient();
 
     // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    const [dealsRes, notesRes, tagsRes, allTagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -58,9 +68,21 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
         .eq("contact_id", contact.id),
+      supabase.from("tags").select("*").order("name"),
     ]);
 
-    if (dealsRes.data) setDeals(dealsRes.data);
+    if (allTagsRes.data) setAllTags(allTagsRes.data as Tag[]);
+    if (dealsRes.data) {
+      setDeals(dealsRes.data);
+      // Seed the editable order fields from the newest deal.
+      const d = dealsRes.data[0] as Deal | undefined;
+      setPMethod(d?.payment_method ?? "");
+      setPStatus(d?.payment_status ?? "");
+      setGrind(d?.grind ?? "");
+      setAddress(d?.address ?? "");
+      setNit(d?.nit ?? "");
+      setCombos(d?.combo_history ?? "");
+    }
     if (notesRes.data) setNotes(notesRes.data);
     if (tagsRes.data) {
       const mapped = tagsRes.data
@@ -79,6 +101,54 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContactData();
   }, [fetchContactData]);
+
+  const contactTagIds = tags.map((t) => t.id);
+
+  const toggleTag = useCallback(
+    async (tagId: string) => {
+      if (!contact) return;
+      const supabase = createClient();
+      const isSel = contactTagIds.includes(tagId);
+      if (isSel) {
+        const { error } = await supabase
+          .from("contact_tags")
+          .delete()
+          .eq("contact_id", contact.id)
+          .eq("tag_id", tagId);
+        if (!error) setTags((prev) => prev.filter((t) => t.id !== tagId));
+      } else {
+        const { data, error } = await supabase
+          .from("contact_tags")
+          .insert({ contact_id: contact.id, tag_id: tagId })
+          .select("id")
+          .single();
+        if (!error && data) {
+          const tg = allTags.find((t) => t.id === tagId);
+          if (tg) setTags((prev) => [...prev, { ...tg, contact_tag_id: data.id }]);
+        }
+      }
+    },
+    [contact, contactTagIds, allTags],
+  );
+
+  const recentDeal = deals[0] ?? null;
+
+  const saveDealField = useCallback(
+    async (patch: Record<string, string | null>) => {
+      if (!recentDeal) return;
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("deals")
+        .update(patch)
+        .eq("id", recentDeal.id);
+      if (!error) {
+        setDeals((prev) =>
+          prev.map((d) => (d.id === recentDeal.id ? { ...d, ...patch } : d)),
+        );
+      }
+    },
+    [recentDeal],
+  );
 
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
@@ -187,28 +257,95 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               <TagIcon className="h-3 w-3" />
               {tSidebar("tags")}
             </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {tags.length === 0 ? (
-                <p className="px-1 text-xs text-muted-foreground">{tSidebar("noTags")}</p>
-              ) : (
-                tags.map((tag) => (
-                  <span
-                    key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
-                    }}
-                  >
-                    {tag.name}
-                  </span>
-                ))
-              )}
+            <div className="mt-2">
+              <TagMultiSelect
+                allTags={allTags}
+                selectedIds={contactTagIds}
+                onToggle={toggleTag}
+                placeholder={tSidebar("noTags")}
+              />
             </div>
           </div>
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
+
+          {/* Order detail (edits the newest deal) */}
+          {recentDeal && (
+            <>
+              <div className="my-4 border-t border-border" />
+              <div>
+                <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <ClipboardList className="h-3 w-3" />
+                  Detalle del pedido
+                </div>
+                <div className="mt-2 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={pMethod}
+                      onChange={(e) => {
+                        setPMethod(e.target.value);
+                        saveDealField({ payment_method: e.target.value || null });
+                      }}
+                      className="h-8 w-full rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
+                    >
+                      <option value="">Forma de pago</option>
+                      <option value="Link de pago">Link de pago</option>
+                      <option value="Transferencia">Transferencia</option>
+                      <option value="Contra entrega">Contra entrega</option>
+                    </select>
+                    <select
+                      value={pStatus}
+                      onChange={(e) => {
+                        setPStatus(e.target.value);
+                        saveDealField({ payment_status: e.target.value || null });
+                      }}
+                      className="h-8 w-full rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
+                    >
+                      <option value="">Estado</option>
+                      <option value="Pendiente">Pendiente</option>
+                      <option value="Pagado">Pagado</option>
+                    </select>
+                  </div>
+                  <select
+                    value={grind}
+                    onChange={(e) => {
+                      setGrind(e.target.value);
+                      saveDealField({ grind: e.target.value || null });
+                    }}
+                    className="h-8 w-full rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
+                  >
+                    <option value="">Grano o molido</option>
+                    <option value="Grano">Grano</option>
+                    <option value="Molido">Molido</option>
+                  </select>
+                  <textarea
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    onBlur={() => saveDealField({ address: address.trim() || null })}
+                    placeholder="Dirección"
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+                  />
+                  <input
+                    value={nit}
+                    onChange={(e) => setNit(e.target.value)}
+                    onBlur={() => saveDealField({ nit: nit.trim() || null })}
+                    placeholder="NIT"
+                    className="w-full resize-none rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+                  />
+                  <textarea
+                    value={combos}
+                    onChange={(e) => setCombos(e.target.value)}
+                    onBlur={() => saveDealField({ combo_history: combos.trim() || null })}
+                    placeholder="Historial de combos"
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-border bg-muted px-2 py-1.5 text-xs text-foreground placeholder-muted-foreground outline-none focus:border-primary/50"
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Active Deals */}
           <div>
