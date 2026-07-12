@@ -1,6 +1,7 @@
 "use client";
 
 import type { Deal, PipelineStage } from "@/types";
+import { useRouter } from "next/navigation";
 import { Calendar, Check, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
 import { useTranslations } from "next-intl";
@@ -36,6 +37,28 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       ? deal.contact.phone
       : deal.title || t("noContact");
   const assigneeLabel = deal.assignee?.full_name || null;
+  const router = useRouter();
+
+  // Response-due traffic light: the lead is waiting when its last message
+  // was inbound (customer) and no one has replied since. Colour by how long
+  // it has been waiting: >5min green, >1h amber, >10h red.
+  const conv = deal.conv;
+  let light: { color: string; label: string } | null = null;
+  if (conv?.last_inbound_at) {
+    const inbound = new Date(conv.last_inbound_at).getTime();
+    const outbound = conv.last_outbound_at
+      ? new Date(conv.last_outbound_at).getTime()
+      : 0;
+    if (inbound > outbound) {
+      const mins = (Date.now() - inbound) / 60000;
+      if (mins > 600) light = { color: "#ef4444", label: "Sin responder +10h" };
+      else if (mins > 60) light = { color: "#eab308", label: "Sin responder +1h" };
+      else if (mins > 5) light = { color: "#22c55e", label: "Sin responder +5min" };
+    }
+  }
+  // Human badge: shown when the AI is NOT handling this lead (paused here or
+  // assigned to a person) so it is being attended manually.
+  const human = !!(conv?.ai_autoreply_disabled || conv?.assigned_agent_id);
 
   return (
     <button
@@ -64,6 +87,22 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <h4 className="flex-1 text-sm font-semibold leading-snug text-foreground break-words">
           {titleLabel}
         </h4>
+        {human && (
+          <span
+            title="Atendido por un humano"
+            className="shrink-0 text-xs leading-none"
+          >
+            🧑
+          </span>
+        )}
+        {light && (
+          <span
+            aria-hidden
+            title={light.label}
+            className="mt-1 size-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: light.color }}
+          />
+        )}
         {deal.grind && (
           <span className="inline-flex shrink-0 items-center rounded-full bg-amber-900/25 px-2 py-0.5 text-[10px] font-medium text-amber-300/90 ring-1 ring-amber-700/30">
             {deal.grind}
@@ -88,7 +127,21 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
           {initials(deal.contact?.name, deal.contact?.phone)}
         </span>
-        <span className="truncate text-xs text-muted-foreground">{subLabel}</span>
+        {conv?.id ? (
+          <span
+            role="link"
+            title="Abrir chat"
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push(`/inbox?c=${conv.id}`);
+            }}
+            className="truncate cursor-pointer text-xs text-primary hover:underline"
+          >
+            {subLabel}
+          </span>
+        ) : (
+          <span className="truncate text-xs text-muted-foreground">{subLabel}</span>
+        )}
       </div>
 
       <div className="mt-2 flex items-center justify-between">
