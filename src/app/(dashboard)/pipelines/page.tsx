@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Pipeline, PipelineStage, Deal } from "@/types";
+import type { Pipeline, PipelineStage, Deal, Tag } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
@@ -23,8 +23,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Search, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
@@ -45,6 +51,11 @@ const SPEC_DEFAULT_STAGES = [
   { name: "Won", color: "#22c55e", position: 4 }, // green
 ];
 
+const PAYMENT_STATUSES: { value: string; color: string }[] = [
+  { value: "Pendiente", color: "#f59e0b" },
+  { value: "Pagado", color: "#10b981" },
+];
+
 export default function PipelinesPage() {
   const t = useTranslations("Pipelines.page");
   const supabase = createClient();
@@ -57,6 +68,10 @@ export default function PipelinesPage() {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
 
   // Dialog / sheet state
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
@@ -315,6 +330,55 @@ export default function PipelinesPage() {
     toast.success(t("toastPipelineCreated"));
   }
 
+  // Load every account tag for the filter dropdown.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("tags").select("*").order("name");
+      if (!cancelled) setAllTags((data ?? []) as Tag[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  const toggleTagFilter = (id: string) =>
+    setSelectedTagIds((p) =>
+      p.includes(id) ? p.filter((x) => x !== id) : [...p, id],
+    );
+  const toggleStatusFilter = (v: string) =>
+    setSelectedStatuses((p) =>
+      p.includes(v) ? p.filter((x) => x !== v) : [...p, v],
+    );
+  const clearFilters = () => {
+    setSelectedTagIds([]);
+    setSelectedStatuses([]);
+  };
+
+  const tagsById = new Map(allTags.map((tg) => [tg.id, tg]));
+  const activeFilterCount = selectedTagIds.length + selectedStatuses.length;
+
+  // Client-side filter: search text (name/phone/email/title), contact tags
+  // (OR), and payment status (OR). Each active filter type is ANDed.
+  const filteredDeals = deals.filter((d) => {
+    const q = search.trim().toLowerCase();
+    if (q) {
+      const hay = `${d.contact?.name ?? ""} ${d.contact?.phone ?? ""} ${
+        d.contact?.email ?? ""
+      } ${d.title ?? ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (selectedTagIds.length > 0) {
+      const dealTagIds = (d.contact?.tags ?? []).map((tg) => tg.id);
+      if (!selectedTagIds.some((id) => dealTagIds.includes(id))) return false;
+    }
+    if (selectedStatuses.length > 0) {
+      if (!d.payment_status || !selectedStatuses.includes(d.payment_status))
+        return false;
+    }
+    return true;
+  });
+
   const selectedPipeline = pipelines.find((p) => p.id === selectedPipelineId);
 
   if (loading) {
@@ -432,10 +496,158 @@ export default function PipelinesPage() {
         </div>
       ) : (
         <>
-          <PipelineAnalytics stages={stages} deals={deals} />
+          {/* Search + tag/payment filter */}
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative w-full max-w-sm">
+                <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Buscar por nombre, teléfono o email..."
+                  className="border-border bg-card pl-8 text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      className="shrink-0 border-border text-muted-foreground hover:bg-muted"
+                    />
+                  }
+                >
+                  <Filter className="size-4" />
+                  Filtrar por etiquetas
+                  {activeFilterCount > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-64 p-0">
+                  <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                    <span className="text-sm font-medium text-popover-foreground">
+                      Filtros
+                    </span>
+                    {activeFilterCount > 0 && (
+                      <button
+                        onClick={clearFilters}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Limpiar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto py-1">
+                    <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Estado de pago
+                    </p>
+                    {PAYMENT_STATUSES.map((st) => (
+                      <label
+                        key={st.value}
+                        className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 hover:bg-muted/50"
+                      >
+                        <Checkbox
+                          checked={selectedStatuses.includes(st.value)}
+                          onCheckedChange={() => toggleStatusFilter(st.value)}
+                          aria-label={`Filtrar por ${st.value}`}
+                        />
+                        <span
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: st.color }}
+                        />
+                        <span className="truncate text-sm text-popover-foreground">
+                          {st.value}
+                        </span>
+                      </label>
+                    ))}
+
+                    <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Etiquetas
+                    </p>
+                    {allTags.length === 0 ? (
+                      <p className="px-3 py-2 text-center text-sm text-muted-foreground">
+                        No hay etiquetas.
+                      </p>
+                    ) : (
+                      allTags.map((tag) => (
+                        <label
+                          key={tag.id}
+                          className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 hover:bg-muted/50"
+                        >
+                          <Checkbox
+                            checked={selectedTagIds.includes(tag.id)}
+                            onCheckedChange={() => toggleTagFilter(tag.id)}
+                            aria-label={`Filtrar por ${tag.name}`}
+                          />
+                          <span
+                            className="size-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="truncate text-sm text-popover-foreground">
+                            {tag.name}
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            {activeFilterCount > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {selectedStatuses.map((v) => {
+                  const st = PAYMENT_STATUSES.find((x) => x.value === v);
+                  return (
+                    <span
+                      key={v}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                      style={{
+                        backgroundColor: (st?.color ?? "#888") + "20",
+                        color: st?.color ?? "#888",
+                      }}
+                    >
+                      {v}
+                      <button onClick={() => toggleStatusFilter(v)} aria-label={`Quitar ${v}`} className="hover:opacity-70">
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+                {selectedTagIds.map((id) => {
+                  const tag = tagsById.get(id);
+                  if (!tag) return null;
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                      style={{ backgroundColor: tag.color + "20", color: tag.color }}
+                    >
+                      {tag.name}
+                      <button onClick={() => toggleTagFilter(id)} aria-label={`Quitar ${tag.name}`} className="hover:opacity-70">
+                        <X className="size-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  onClick={clearFilters}
+                  className="px-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Limpiar
+                </button>
+              </div>
+            )}
+          </div>
+
+          <PipelineAnalytics stages={stages} deals={filteredDeals} />
           <PipelineBoard
             stages={stages}
-            deals={deals}
+            deals={filteredDeals}
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
             onEditDeal={handleEditDeal}
