@@ -248,6 +248,9 @@ export async function engineSendMedia(
     sender_type: 'bot',
     content_type: args.kind,
     content_text: args.caption ?? null,
+    // Store the public media link so the inbox bubble can render it.
+    // Without this the outbound image showed as "Photo unavailable".
+    media_url: args.link,
     message_id: waMessageId,
     status: 'sent',
   })
