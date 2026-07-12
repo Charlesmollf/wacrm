@@ -124,7 +124,7 @@ export default function PipelinesPage() {
       // Flatten the embedded contact_tags(tags(*)) join onto contact.tags
       // so the card can render the lead's tags (e.g. "Devolución").
       type RawTagJoin = { tags: { id: string; name: string; color: string } | null };
-      return ((data ?? []) as unknown[]).map((row) => {
+      const rows = ((data ?? []) as unknown[]).map((row) => {
         const r = row as { contact?: ({ contact_tags?: RawTagJoin[] } & Record<string, unknown>) | null };
         if (r.contact) {
           const { contact_tags, ...contact } = r.contact;
@@ -140,6 +140,46 @@ export default function PipelinesPage() {
         }
         return r;
       }) as Deal[];
+
+      // Hydrate each deal with its contact's newest conversation (id +
+      // activity times + AI status) for the chat shortcut and the
+      // response-due traffic light. One query for the whole board.
+      const contactIds = Array.from(
+        new Set(rows.map((d) => d.contact_id).filter((id): id is string => !!id)),
+      );
+      if (contactIds.length > 0) {
+        const { data: convs } = await supabase
+          .from("conversations")
+          .select(
+            "id, contact_id, last_message_at, last_inbound_at, last_outbound_at, ai_autoreply_disabled, assigned_agent_id",
+          )
+          .in("contact_id", contactIds)
+          .order("last_message_at", { ascending: false });
+        const byContact = new Map<string, NonNullable<Deal["conv"]>>();
+        for (const c of (convs ?? []) as Array<{
+          id: string;
+          contact_id: string;
+          last_inbound_at: string | null;
+          last_outbound_at: string | null;
+          ai_autoreply_disabled: boolean | null;
+          assigned_agent_id: string | null;
+        }>) {
+          // First seen wins — rows are newest-first by last_message_at.
+          if (!byContact.has(c.contact_id)) {
+            byContact.set(c.contact_id, {
+              id: c.id,
+              last_inbound_at: c.last_inbound_at,
+              last_outbound_at: c.last_outbound_at,
+              ai_autoreply_disabled: c.ai_autoreply_disabled,
+              assigned_agent_id: c.assigned_agent_id,
+            });
+          }
+        }
+        for (const d of rows) {
+          d.conv = d.contact_id ? byContact.get(d.contact_id) ?? null : null;
+        }
+      }
+      return rows;
     },
     [supabase],
   );
