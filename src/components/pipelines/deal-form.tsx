@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { TagMultiSelect } from "@/components/shared/tag-multiselect";
 import {
   Check,
   X,
@@ -390,37 +391,12 @@ export function DealForm({
             {contactId && (
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Etiquetas</Label>
-                {allTags.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No hay etiquetas. Créalas en Ajustes → Campos y etiquetas.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {allTags.map((tag) => {
-                      const selected = contactTagIds.includes(tag.id);
-                      return (
-                        <button
-                          key={tag.id}
-                          type="button"
-                          onClick={() => toggleTag(tag.id)}
-                          disabled={savingTags}
-                          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all ${
-                            selected
-                              ? "ring-2 ring-primary ring-offset-1 ring-offset-border"
-                              : "opacity-50 hover:opacity-80"
-                          }`}
-                          style={{
-                            backgroundColor: tag.color + "20",
-                            color: tag.color,
-                          }}
-                        >
-                          {selected && <Check className="mr-1 h-3 w-3" />}
-                          {tag.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <TagMultiSelect
+                  allTags={allTags}
+                  selectedIds={contactTagIds}
+                  onToggle={toggleTag}
+                  disabled={savingTags}
+                />
               </div>
             )}
 
