@@ -1,6 +1,7 @@
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
-import { engineSendText } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
+import { extractImageMarkers } from './product-images'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -185,14 +186,34 @@ export async function dispatchInboundImageToAiReply(
     }
     if (claimed !== true) return
 
+    // If the model recommended a product it can also show its photo —
+    // pull any [[IMG: product]] markers, send the cleaned text, then the
+    // matching image(s). Best-effort: a failed photo never loses the text.
+    const { cleanText, images } = extractImageMarkers(text)
+
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text,
+      text: cleanText || text,
       aiGenerated: true,
     })
+
+    for (const img of images) {
+      try {
+        await engineSendMedia({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId,
+          contactId,
+          kind: 'image',
+          link: img.url,
+        })
+      } catch (mediaErr) {
+        console.error('[ai image-reply] product image send failed:', mediaErr)
+      }
+    }
   } catch (err) {
     console.error('[ai image-reply] dispatch failed:', err)
   }

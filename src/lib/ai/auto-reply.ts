@@ -7,7 +7,8 @@ import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
-import { engineSendText } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
+import { extractImageMarkers } from './product-images'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 interface DispatchArgs {
@@ -179,14 +180,34 @@ export async function dispatchInboundToAiReply(
     }
     if (claimed !== true) return // lost the per-conversation cap race
 
+    // Pull any [[IMG: product]] markers the model emitted so we can
+    // send the matching product photos after the (cleaned) text. Image
+    // sends are best-effort — a failed photo must never lose the reply.
+    const { cleanText, images } = extractImageMarkers(text)
+
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text,
+      text: cleanText || text,
       aiGenerated: true,
     })
+
+    for (const img of images) {
+      try {
+        await engineSendMedia({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId,
+          contactId,
+          kind: 'image',
+          link: img.url,
+        })
+      } catch (mediaErr) {
+        console.error('[ai auto-reply] product image send failed:', mediaErr)
+      }
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
