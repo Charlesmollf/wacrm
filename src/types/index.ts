@@ -385,6 +385,15 @@ export interface Deal {
   contact?: Contact;
   stage?: PipelineStage;
   assignee?: Profile;
+  /** Newest conversation for this deal's contact — hydrated on the
+   *  pipeline board for the chat shortcut + response-due light. */
+  conv?: {
+    id: string;
+    last_inbound_at?: string | null;
+    last_outbound_at?: string | null;
+    ai_autoreply_disabled?: boolean | null;
+    assigned_agent_id?: string | null;
+  } | null;
 }
 
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed';
