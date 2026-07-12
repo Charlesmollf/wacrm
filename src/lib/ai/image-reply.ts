@@ -2,6 +2,7 @@ import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
+import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } from './deal-updates'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -111,7 +112,8 @@ export async function dispatchInboundImageToAiReply(
       `según tu base de conocimiento, y pregunta si lo prefiere en grano o molido. ` +
       `Si es un producto que no manejas, ofrece el más parecido de tu catálogo. ` +
       `Si la imagen no muestra un producto claro, pregunta amablemente en qué le ` +
-      `puedes ayudar. Responde en español, breve y cálido, sin inventar precios.`
+      `puedes ayudar. Responde en español, breve y cálido, sin inventar precios.\n\n` +
+      DEAL_EXTRACTION_INSTRUCTIONS
 
     const userText = caption
       ? `El cliente envió esta imagen y escribió: "${caption}"`
@@ -189,14 +191,16 @@ export async function dispatchInboundImageToAiReply(
     // If the model recommended a product it can also show its photo —
     // pull any [[IMG: product]] markers, send the cleaned text, then the
     // matching image(s). Best-effort: a failed photo never loses the text.
-    const { cleanText, images } = extractImageMarkers(text)
+    const deal = extractDealMarkers(text)
+    const { cleanText, images } = extractImageMarkers(deal.cleanText)
+    void applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text: cleanText || text,
+      text: cleanText || deal.cleanText || text,
       aiGenerated: true,
     })
 

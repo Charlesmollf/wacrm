@@ -9,6 +9,7 @@ import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
+import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 interface DispatchArgs {
@@ -180,17 +181,20 @@ export async function dispatchInboundToAiReply(
     }
     if (claimed !== true) return // lost the per-conversation cap race
 
-    // Pull any [[IMG: product]] markers the model emitted so we can
-    // send the matching product photos after the (cleaned) text. Image
-    // sends are best-effort — a failed photo must never lose the reply.
-    const { cleanText, images } = extractImageMarkers(text)
+    // Pull structured lead data ([[SET:...]]) then product-photo markers
+    // ([[IMG:...]]) out of the reply. Both are stripped before sending so
+    // the customer never sees them; the data is written to the deal card
+    // best-effort (never blocks or fails the send).
+    const deal = extractDealMarkers(text)
+    const { cleanText, images } = extractImageMarkers(deal.cleanText)
+    void applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text: cleanText || text,
+      text: cleanText || deal.cleanText || text,
       aiGenerated: true,
     })
 
