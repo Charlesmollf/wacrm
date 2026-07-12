@@ -848,6 +848,52 @@ async function processMessage(
   })
 }
 
+/**
+ * Resolve catalog product names for a set of retailer_ids (SKUs) via
+ * Meta's Graph API. WhatsApp `order` webhooks only carry the SKU, not
+ * the human name — this fills that gap so the inbox shows "Catuaí"
+ * instead of "50032383656233". Best-effort: any failure (missing
+ * catalog scope on the token, network, etc.) returns an empty map and
+ * the caller falls back to the SKU, so an order is never lost.
+ */
+async function fetchCatalogProductNames(
+  catalogId: string,
+  retailerIds: string[],
+  accessToken: string
+): Promise<Record<string, string>> {
+  const names: Record<string, string> = {}
+  if (!catalogId || retailerIds.length === 0) return names
+  try {
+    const filter = JSON.stringify({ retailer_id: { is_any: retailerIds } })
+    const url =
+      `https://graph.facebook.com/v21.0/${catalogId}/products` +
+      `?fields=retailer_id,name&limit=200&filter=${encodeURIComponent(filter)}`
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!res.ok) {
+      console.error(
+        '[webhook] catalog product-name lookup failed:',
+        res.status,
+        await res.text().catch(() => '')
+      )
+      return names
+    }
+    const data = (await res.json()) as {
+      data?: Array<{ retailer_id?: string; name?: string }>
+    }
+    for (const p of data.data ?? []) {
+      if (p.retailer_id && p.name) names[p.retailer_id] = p.name
+    }
+  } catch (e) {
+    console.error(
+      '[webhook] catalog product-name lookup error:',
+      e instanceof Error ? e.message : e
+    )
+  }
+  return names
+}
+
 async function parseMessageContent(
   message: WhatsAppMessage,
   accessToken: string
@@ -1002,10 +1048,20 @@ async function parseMessageContent(
         return { ...empty, contentText: order?.text || '🛒 Pedido del catálogo' }
       }
       const currency = items[0]?.currency || ''
+      // Translate SKUs to product names via the Meta catalog (falls
+      // back to the SKU when the lookup can't resolve a name).
+      const names = order?.catalog_id
+        ? await fetchCatalogProductNames(
+            order.catalog_id,
+            items.map((i) => i.product_retailer_id),
+            accessToken
+          )
+        : {}
       let total = 0
       const lines = items.map((it) => {
         total += (it.item_price || 0) * (it.quantity || 0)
-        return `• ${it.quantity}x ${it.product_retailer_id} — ${currency} ${it.item_price}`
+        const label = names[it.product_retailer_id] || it.product_retailer_id
+        return `• ${it.quantity}x ${label} — ${currency} ${it.item_price}`
       })
       const header = `🛒 Pedido del catálogo (${items.length} ${items.length === 1 ? 'producto' : 'productos'}):`
       const footer = `Total: ${currency} ${total}`
