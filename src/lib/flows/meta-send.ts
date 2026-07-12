@@ -143,6 +143,7 @@ export async function engineSendText(
     .update({
       last_message_text: args.text,
       last_message_at: new Date().toISOString(),
+      last_outbound_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', args.conversationId)
@@ -263,6 +264,7 @@ export async function engineSendMedia(
     .update({
       last_message_text: preview,
       last_message_at: new Date().toISOString(),
+      last_outbound_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', args.conversationId)
@@ -456,6 +458,7 @@ async function sendInteractiveViaMeta(
     .update({
       last_message_text: input.bodyText,
       last_message_at: new Date().toISOString(),
+      last_outbound_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.conversationId)
