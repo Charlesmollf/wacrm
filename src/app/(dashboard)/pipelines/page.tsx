@@ -101,10 +101,30 @@ export default function PipelinesPage() {
     async (pipelineId: string) => {
       const { data } = await supabase
         .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+        .select(
+          "*, contact:contacts(*, contact_tags(tags(*))), assignee:profiles!deals_assigned_to_fkey(*)",
+        )
         .eq("pipeline_id", pipelineId)
         .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+      // Flatten the embedded contact_tags(tags(*)) join onto contact.tags
+      // so the card can render the lead's tags (e.g. "Devolución").
+      type RawTagJoin = { tags: { id: string; name: string; color: string } | null };
+      return ((data ?? []) as unknown[]).map((row) => {
+        const r = row as { contact?: ({ contact_tags?: RawTagJoin[] } & Record<string, unknown>) | null };
+        if (r.contact) {
+          const { contact_tags, ...contact } = r.contact;
+          return {
+            ...r,
+            contact: {
+              ...contact,
+              tags: (contact_tags ?? [])
+                .map((ct) => ct.tags)
+                .filter((tg): tg is { id: string; name: string; color: string } => tg != null),
+            },
+          };
+        }
+        return r;
+      }) as Deal[];
     },
     [supabase],
   );
