@@ -65,6 +65,9 @@ export function DealForm({
   const [assignedTo, setAssignedTo] = useState("");
   const [expectedCloseDate, setExpectedCloseDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState("");
+  const [grind, setGrind] = useState("");
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -94,6 +97,9 @@ export function DealForm({
       setAssignedTo(deal.assigned_to ?? "");
       setExpectedCloseDate(deal.expected_close_date ?? "");
       setNotes(deal.notes ?? "");
+      setPaymentMethod(deal.payment_method ?? "");
+      setPaymentStatus(deal.payment_status ?? "");
+      setGrind(deal.grind ?? "");
     } else {
       setTitle("");
       setValue("");
@@ -103,6 +109,9 @@ export function DealForm({
       setAssignedTo("");
       setExpectedCloseDate("");
       setNotes("");
+      setPaymentMethod("");
+      setPaymentStatus("");
+      setGrind("");
     }
   }, [open, deal, defaultStageId, stages, defaultCurrency]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -168,6 +177,9 @@ export function DealForm({
       assigned_to: assignedTo || null,
       notes: notes.trim() || null,
       expected_close_date: expectedCloseDate || null,
+      payment_method: paymentMethod || null,
+      payment_status: paymentStatus || null,
+      grind: grind || null,
     };
 
     if (deal) {
@@ -325,6 +337,47 @@ export function DealForm({
               </div>
             </div>
 
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label className="text-muted-foreground">Forma de pago</Label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">—</option>
+                  <option value="Link de pago">Link de pago</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="Contra entrega">Contra entrega</option>
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label className="text-muted-foreground">Estado de pago</Label>
+                <select
+                  value={paymentStatus}
+                  onChange={(e) => setPaymentStatus(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">—</option>
+                  <option value="Pendiente">Pendiente</option>
+                  <option value="Pagado">Pagado</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">Grano o molido</Label>
+              <select
+                value={grind}
+                onChange={(e) => setGrind(e.target.value)}
+                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              >
+                <option value="">—</option>
+                <option value="Grano">Grano</option>
+                <option value="Molido">Molido</option>
+              </select>
+            </div>
             <div className="grid gap-2">
               <Label className="text-muted-foreground">{t("expectedCloseDate")}</Label>
               <Input
