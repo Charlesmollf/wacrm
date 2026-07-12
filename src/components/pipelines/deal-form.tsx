@@ -63,11 +63,13 @@ export function DealForm({
   const [contactId, setContactId] = useState("");
   const [stageId, setStageId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
-  const [expectedCloseDate, setExpectedCloseDate] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [paymentStatus, setPaymentStatus] = useState("");
   const [grind, setGrind] = useState("");
+  const [address, setAddress] = useState("");
+  const [nit, setNit] = useState("");
+  const [comboHistory, setComboHistory] = useState("");
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -95,11 +97,13 @@ export function DealForm({
       setContactId(deal.contact_id ?? "");
       setStageId(deal.stage_id);
       setAssignedTo(deal.assigned_to ?? "");
-      setExpectedCloseDate(deal.expected_close_date ?? "");
       setNotes(deal.notes ?? "");
       setPaymentMethod(deal.payment_method ?? "");
       setPaymentStatus(deal.payment_status ?? "");
       setGrind(deal.grind ?? "");
+      setAddress(deal.address ?? "");
+      setNit(deal.nit ?? "");
+      setComboHistory(deal.combo_history ?? "");
     } else {
       setTitle("");
       setValue("");
@@ -107,11 +111,13 @@ export function DealForm({
       setContactId("");
       setStageId(defaultStageId || stages[0]?.id || "");
       setAssignedTo("");
-      setExpectedCloseDate("");
       setNotes("");
       setPaymentMethod("");
       setPaymentStatus("");
       setGrind("");
+      setAddress("");
+      setNit("");
+      setComboHistory("");
     }
   }, [open, deal, defaultStageId, stages, defaultCurrency]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -176,10 +182,12 @@ export function DealForm({
       stage_id: stageId,
       assigned_to: assignedTo || null,
       notes: notes.trim() || null,
-      expected_close_date: expectedCloseDate || null,
       payment_method: paymentMethod || null,
       payment_status: paymentStatus || null,
       grind: grind || null,
+      address: address.trim() || null,
+      nit: nit.trim() || null,
+      combo_history: comboHistory.trim() || null,
     };
 
     if (deal) {
@@ -283,26 +291,39 @@ export function DealForm({
 
             <div className="grid gap-2">
               <Label className="text-muted-foreground">{t("contact")}</Label>
-              <select
-                value={contactId}
-                onChange={(e) => setContactId(e.target.value)}
-                className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-              >
-                <option value="">{t("selectContact")}</option>
-                {contacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name || c.phone}
-                  </option>
-                ))}
-              </select>
+              {deal ? (
+                // Locked in edit mode: the contact is set when the deal is
+                // created and must not be changed by accident (a stray click
+                // used to reassign the phone). Read-only display instead.
+                <div className="flex h-9 w-full items-center rounded-lg border border-border bg-muted/50 px-2.5 text-sm text-foreground">
+                  {deal.contact?.name ||
+                    deal.contact?.phone ||
+                    contacts.find((c) => c.id === contactId)?.name ||
+                    contacts.find((c) => c.id === contactId)?.phone ||
+                    "—"}
+                </div>
+              ) : (
+                <select
+                  value={contactId}
+                  onChange={(e) => setContactId(e.target.value)}
+                  className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">{t("selectContact")}</option>
+                  {contacts.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.phone}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               {linkedConversation && (
                 <Link
                   href={`/inbox?c=${linkedConversation.id}`}
-                  className="mt-1 inline-flex items-center gap-1.5 self-start rounded-md bg-primary/10 px-2 py-1 text-xs text-primary hover:bg-primary/20"
+                  className="mt-1 inline-flex items-center justify-center gap-2 self-start rounded-lg bg-primary/15 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/25"
                 >
-                  <MessageSquare className="h-3 w-3" />
-                  {t("linkToConversation")}
+                  <MessageSquare className="h-4 w-4" />
+                  Chat
                 </Link>
               )}
             </div>
@@ -378,16 +399,36 @@ export function DealForm({
                 <option value="Molido">Molido</option>
               </select>
             </div>
+
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("expectedCloseDate")}</Label>
+              <Label className="text-muted-foreground">Dirección</Label>
+              <Textarea
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Dirección de entrega exacta"
+                className="min-h-[60px] border-border bg-muted text-foreground"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">NIT</Label>
               <Input
-                type="date"
-                value={expectedCloseDate}
-                onChange={(e) => setExpectedCloseDate(e.target.value)}
+                value={nit}
+                onChange={(e) => setNit(e.target.value)}
+                placeholder="NIT para factura (opcional)"
                 className="border-border bg-muted text-foreground"
               />
             </div>
 
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">Historial de combos</Label>
+              <Textarea
+                value={comboHistory}
+                onChange={(e) => setComboHistory(e.target.value)}
+                placeholder="Combos que ha comprado con el tiempo"
+                className="min-h-[80px] border-border bg-muted text-foreground"
+              />
+            </div>
             <div className="grid gap-2">
               <Label className="text-muted-foreground">{t("stage")}</Label>
               <select
