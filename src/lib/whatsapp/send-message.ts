@@ -485,6 +485,9 @@ export async function sendMessageToConversation(
     .update({
       last_message_text: lastMessageText,
       last_message_at: new Date().toISOString(),
+      // Mark the agent/template reply so the pipeline response-due light
+      // turns off (agent stepped in). Mirrors engineSendText/Media.
+      last_outbound_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', conversationId);
