@@ -165,6 +165,9 @@ export interface Conversation {
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
+  /** Activity times (migration 039) — drive the inbox "waiting" dot. */
+  last_inbound_at?: string | null;
+  last_outbound_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;
