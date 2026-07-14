@@ -490,6 +490,30 @@ export default function InboxPage() {
     router.replace("/inbox", { scroll: false });
   }, [router]);
 
+  const handleDeleteConversation = useCallback(
+    async (conversationId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("conversations")
+        .delete()
+        .eq("id", conversationId);
+      if (error) {
+        toast.error("No se pudo eliminar la conversación");
+        return;
+      }
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      toast.success("Conversación eliminada");
+      if (activeConversation?.id === conversationId) {
+        setActiveConversation(null);
+        setActiveContact(null);
+        setMessages([]);
+        autoSelectedForDeepLinkRef.current = null;
+        router.replace("/inbox", { scroll: false });
+      }
+    },
+    [activeConversation, router],
+  );
+
 
   const handleMessagesLoaded = useCallback((loaded: Message[]) => {
     setMessages(loaded);
@@ -610,6 +634,7 @@ export default function InboxPage() {
             onBack={handleCloseConversation}
             resyncToken={resyncToken}
             onRefresh={handleManualRefresh}
+            onDelete={handleDeleteConversation}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
           />
