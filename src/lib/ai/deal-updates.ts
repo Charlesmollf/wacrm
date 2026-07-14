@@ -28,7 +28,8 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Pagado; molienda = Grano | Molido; ' +
-  'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura. ' +
+  'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; ' +
+  'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
 
 const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
@@ -41,6 +42,8 @@ export interface DealUpdates {
   nit?: string
   /** Combo mentioned in this message — appended to combo_history. */
   combo?: string
+  /** Total sale amount (Q); written to deal.value on confirmation. */
+  total?: string
 }
 
 export interface ExtractedDealData {
@@ -95,6 +98,9 @@ export function extractDealMarkers(text: string): ExtractedDealData {
         case 'combo':
           updates.combo = val
           break
+        case 'total':
+          updates.total = val
+          break
         case 'direccion':
           updates.address = val
           break
@@ -132,14 +138,15 @@ export async function applyDealUpdates(
       updates.grind ||
       updates.address ||
       updates.nit ||
-      updates.combo
+      updates.combo ||
+      updates.total
     if (!hasField) return
 
     // Most recent deal for this contact in the account — that's the one
     // the current conversation is about.
     const { data: deal } = await db
       .from('deals')
-      .select('id, combo_history')
+      .select('id, combo_history, sold_at')
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false })
@@ -153,6 +160,15 @@ export async function applyDealUpdates(
     if (updates.grind) patch.grind = updates.grind
     if (updates.address) patch.address = updates.address
     if (updates.nit) patch.nit = updates.nit
+
+    if (updates.total) {
+      const amount = parseFloat(String(updates.total).replace(/[^0-9.]/g, ''))
+      if (Number.isFinite(amount) && amount > 0) {
+        patch.value = String(amount)
+        const prevSold = (deal as { sold_at?: string | null }).sold_at
+        if (!prevSold) patch.sold_at = new Date().toISOString()
+      }
+    }
 
     if (updates.combo) {
       const date = new Date().toISOString().slice(0, 10)
