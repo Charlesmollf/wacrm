@@ -108,17 +108,19 @@ export function MomentumChart() {
   }, [salesByDay]);
 
   // Custom tooltip: for each rate line, project the month-end close as
-  // "sold so far this month + rate x days remaining".
-  const renderTooltip = ({
-    active,
-    payload,
-    label,
-  }: {
-    active?: boolean;
-    payload?: { dataKey: string; value: number; color: string }[];
-    label?: number;
-  }) => {
-    if (!active || !payload || payload.length === 0) return null;
+  // "sold so far this month + rate x days remaining". Typed loosely because
+  // recharts' TooltipContentProps (readonly payload) is awkward to match;
+  // we narrow the fields we use inside.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderTooltip = (props: any) => {
+    const active = props?.active as boolean | undefined;
+    const label = props?.label as number | string | undefined;
+    const payload = (props?.payload ?? []) as {
+      dataKey?: string;
+      value?: number;
+      color?: string;
+    }[];
+    if (!active || payload.length === 0) return null;
     const labels: Record<string, string> = {
       daily: "Diario",
       avg7: "Prom. 7 días",
@@ -128,11 +130,12 @@ export function MomentumChart() {
       <div className="rounded-lg border border-border bg-popover p-3 text-xs shadow-lg">
         <p className="mb-1 font-semibold text-popover-foreground">Día {label}</p>
         {payload.map((p) => {
-          const projection = mtd + p.value * remaining;
+          const val = Number(p.value) || 0;
+          const projection = mtd + val * remaining;
           return (
-            <div key={p.dataKey} className="mb-1">
+            <div key={String(p.dataKey)} className="mb-1">
               <span style={{ color: p.color }} className="font-medium">
-                {labels[p.dataKey] ?? p.dataKey}: {qFmt(p.value)}/día
+                {labels[String(p.dataKey)] ?? String(p.dataKey)}: {qFmt(val)}/día
               </span>
               <div className="text-muted-foreground">
                 Cierre proyectado: <span className="font-semibold text-foreground">{qFmt(projection)}</span>
@@ -188,7 +191,7 @@ export function MomentumChart() {
                 tickLine={false}
                 axisLine={false}
                 width={48}
-                tickFormatter={(v) => qFmt(v)}
+                tickFormatter={(v) => qFmt(Number(v))}
               />
               <Tooltip content={renderTooltip} />
               <Line type="monotone" dataKey="avg30" stroke={COLORS.avg30} strokeWidth={2} dot={false} />
