@@ -26,6 +26,7 @@ import {
   ArrowLeft,
   RefreshCw,
   PanelRightOpen,
+  Trash2,
   PanelRightClose,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
@@ -100,6 +101,8 @@ interface MessageThreadProps {
    * working; the button is only rendered when this is provided.
    */
   onRefresh?: () => void;
+  /** Delete this conversation from the inbox. */
+  onDelete?: (conversationId: string) => void;
   /**
    * Desktop-only contact-panel toggle. The page owns the open/closed
    * state (it's the one that renders the sidebar), so the thread just
@@ -165,6 +168,7 @@ export function MessageThread({
   onBack,
   resyncToken = 0,
   onRefresh,
+  onDelete,
   contactPanelOpen,
   onToggleContactPanel,
 }: MessageThreadProps) {
@@ -201,6 +205,17 @@ export function MessageThread({
       refreshTimerRef.current = null;
     }, 700);
   }, [isRefreshing, onRefresh]);
+
+  const handleDeleteClick = useCallback(() => {
+    if (!onDelete || !conversation) return;
+    if (
+      window.confirm(
+        "¿Eliminar esta conversación del inbox? Esta acción no se puede deshacer.",
+      )
+    ) {
+      onDelete(conversation.id);
+    }
+  }, [onDelete, conversation]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
 
   // Profiles are bounded by RLS to rows the current user is allowed to
@@ -962,6 +977,21 @@ export function MessageThread({
               <RefreshCw
                 className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
               />
+            </button>
+          )}
+
+          {/* Delete conversation */}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              aria-label="Eliminar conversación"
+              title="Eliminar conversación"
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400",
+              )}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
 
