@@ -34,6 +34,8 @@ interface TemplatePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (template: MessageTemplate, values: TemplateSendValues) => void;
+  /** Contact name, used to auto-fill the first body variable {{1}}. */
+  contactName?: string;
 }
 
 function renderBodyPreview(body: string, params: string[]): string {
@@ -78,6 +80,7 @@ export function TemplatePicker({
   open,
   onOpenChange,
   onSelect,
+  contactName,
 }: TemplatePickerProps) {
   const t = useTranslations("Inbox.templatePicker");
 
@@ -156,7 +159,14 @@ export function TemplatePicker({
       return;
     }
     setSelected(template);
-    setParams(new Array(slots.bodyVars.length).fill(""));
+    // Auto-fill the first body variable {{1}} with the contact's name so
+    // the agent doesn't retype it every time (and the Send button, which
+    // stays disabled while {{1}} is empty, becomes enabled).
+    const initialParams = new Array(slots.bodyVars.length).fill("");
+    if (slots.bodyVars.length > 0 && contactName && contactName.trim()) {
+      initialParams[0] = contactName.trim();
+    }
+    setParams(initialParams);
     setHeaderText("");
     setButtonParams({});
   }
