@@ -456,17 +456,18 @@ function DraggableDealCard({
   });
 
   return (
-    <div className="relative">
+    <div className="group relative">
       {/* Selection checkbox — sibling of the draggable node so clicking
-          it never starts a drag. */}
+          it never starts a drag. Hidden until hover (or when selected)
+          so it doesn't cover the contact name. */}
       <button
         type="button"
         aria-label="Seleccionar deal"
         onClick={() => onToggleSelect(deal.id)}
-        className={`absolute left-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded border shadow-sm transition-colors ${
+        className={`absolute left-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded border shadow-sm transition-opacity ${
           selected
-            ? "border-primary bg-primary text-primary-foreground"
-            : "border-border bg-card/90 hover:border-primary"
+            ? "border-primary bg-primary text-primary-foreground opacity-100"
+            : "border-border bg-card/90 opacity-0 hover:border-primary group-hover:opacity-100"
         }`}
       >
         {selected ? <Check className="h-3.5 w-3.5" /> : null}

@@ -63,6 +63,7 @@ export function DealForm({
   const [value, setValue] = useState("");
   const [currency, setCurrency] = useState(defaultCurrency);
   const [contactId, setContactId] = useState("");
+  const [contactName, setContactName] = useState("");
   const [stageId, setStageId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [notes, setNotes] = useState("");
@@ -100,6 +101,7 @@ export function DealForm({
       // contact_id is nullable when the contact has been deleted
       // (migration 004: ON DELETE SET NULL). "" means "no selection".
       setContactId(deal.contact_id ?? "");
+      setContactName(deal.contact?.name ?? "");
       setStageId(deal.stage_id);
       setAssignedTo(deal.assigned_to ?? "");
       setNotes(deal.notes ?? "");
@@ -306,6 +308,21 @@ export function DealForm({
     // the board refreshes once when the sheet closes (see Sheet onOpenChange).
   }
 
+  // Rename the deal's contact (edit mode). Distinct from reassigning the
+  // contact — only updates the name on the existing contact record.
+  async function saveContactName() {
+    if (!deal?.contact_id) return;
+    const { error } = await supabase
+      .from("contacts")
+      .update({ name: contactName.trim() || null })
+      .eq("id", deal.contact_id);
+    if (error) {
+      toast.error(t("toastFailedSave"));
+      return;
+    }
+    onSaved();
+  }
+
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
@@ -380,13 +397,17 @@ export function DealForm({
                 // Locked in edit mode: the contact is set when the deal is
                 // created and must not be changed by accident (a stray click
                 // used to reassign the phone). Read-only display instead.
-                <div className="flex h-9 w-full items-center rounded-lg border border-border bg-muted/50 px-2.5 text-sm text-foreground">
-                  {deal.contact?.name ||
+                <Input
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  onBlur={saveContactName}
+                  placeholder={
                     deal.contact?.phone ||
-                    contacts.find((c) => c.id === contactId)?.name ||
                     contacts.find((c) => c.id === contactId)?.phone ||
-                    "—"}
-                </div>
+                    "Nombre del contacto"
+                  }
+                  className="border-border bg-muted text-foreground"
+                />
               ) : (
                 <select
                   value={contactId}
