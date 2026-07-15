@@ -4,8 +4,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { QuickActions } from "@/components/dashboard/quick-actions";
 import { MomentumChart } from "@/components/dashboard/momentum-chart";
 import {
-  ConversationsVsSalesChart,
-  NewContactsChart,
+  ActivityChart,
   PipelineValueBars,
   RecentPurchases,
 } from "@/components/dashboard/dashboard-insights";
@@ -26,19 +25,17 @@ export default function DashboardPage() {
       {/* Quick actions */}
       <QuickActions />
 
-      {/* Conversaciones vs Ventas + Nuevos contactos (líneas, 30 días) */}
+      {/* Fila superior (mismo tamaño que antes): actividad diaria (3 líneas)
+          + valor del pipeline por columna, ambas compactas. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ConversationsVsSalesChart />
-        <NewContactsChart />
+        <ActivityChart />
+        <PipelineValueBars currency={defaultCurrency} />
       </div>
-
-      {/* Valor del pipeline por columna (barras) */}
-      <PipelineValueBars currency={defaultCurrency} />
 
       {/* Momentum / proyección de cierre de mes */}
       <MomentumChart />
 
-      {/* Compras recientes (reemplaza el feed de actividad) */}
+      {/* Compras recientes */}
       <RecentPurchases currency={defaultCurrency} />
     </div>
   );
