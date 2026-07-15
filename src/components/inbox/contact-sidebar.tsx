@@ -47,6 +47,22 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [dealValue, setDealValue] = useState("");
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  const [nameVal, setNameVal] = useState("");
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNameVal(contact?.name ?? "");
+  }, [contact?.id, contact?.name]);
+
+  const saveContactName = useCallback(async () => {
+    if (!contact) return;
+    const v = nameVal.trim();
+    const supabase = createClient();
+    await supabase
+      .from("contacts")
+      .update({ name: v || null })
+      .eq("id", contact.id);
+  }, [contact, nameVal]);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -200,7 +216,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   }
 
   const displayName = contact.name || contact.phone;
-  const initials = displayName.charAt(0).toUpperCase();
+  const initials = (nameVal || contact.phone || "").charAt(0).toUpperCase();
 
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
@@ -219,9 +235,13 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                 initials
               )}
             </div>
-            <h3 className="mt-3 text-sm font-semibold text-foreground">
-              {displayName}
-            </h3>
+            <input
+              value={nameVal}
+              onChange={(e) => setNameVal(e.target.value)}
+              onBlur={saveContactName}
+              placeholder="Nombre del contacto"
+              className="mt-3 w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-center text-sm font-semibold text-foreground outline-none hover:border-border focus:border-primary focus:bg-muted"
+            />
             {contact.company && (
               <p className="text-xs text-muted-foreground">{contact.company}</p>
             )}
