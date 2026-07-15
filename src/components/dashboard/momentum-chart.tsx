@@ -25,7 +25,11 @@ const COLORS = {
 };
 
 function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  // Local date (the dashboard runs in the store's own timezone, GT UTC-6).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 interface Point {
@@ -58,7 +62,7 @@ export function MomentumChart() {
       const map: Record<string, number> = {};
       for (const row of (data ?? []) as { value: number | null; sold_at: string | null }[]) {
         if (!row.sold_at) continue;
-        const key = row.sold_at.slice(0, 10);
+        const key = ymd(new Date(row.sold_at));
         map[key] = (map[key] ?? 0) + (Number(row.value) || 0);
       }
       setSalesByDay(map);
