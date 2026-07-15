@@ -454,6 +454,7 @@ export function DealForm({
                 >
                   <option value="">—</option>
                   <option value="Pendiente">Pendiente</option>
+                  <option value="Por confirmar">Por confirmar</option>
                   <option value="Pagado">Pagado</option>
                 </select>
               </div>
