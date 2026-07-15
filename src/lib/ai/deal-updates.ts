@@ -29,7 +29,7 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido; ' +
   'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; ' +
-  'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. ' +
+  'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. ' +
   'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
 
@@ -148,7 +148,7 @@ export async function applyDealUpdates(
     // the current conversation is about.
     const { data: deal } = await db
       .from('deals')
-      .select('id, combo_history, sold_at')
+      .select('id, combo_history, sold_at, payment_status')
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false })
@@ -168,7 +168,20 @@ export async function applyDealUpdates(
       if (Number.isFinite(amount) && amount > 0) {
         patch.value = String(amount)
         const prevSold = (deal as { sold_at?: string | null }).sold_at
-        if (!prevSold) patch.sold_at = new Date().toISOString()
+        const currentStatus = (
+          (deal as { payment_status?: string | null }).payment_status || ''
+        ).toLowerCase()
+        if (currentStatus.includes('pagad')) {
+          // Repeat purchase: the previous sale was already paid, so a new
+          // confirmed total means a brand-new order. Restart the payment
+          // cycle (back to Pendiente so it must be confirmed again) and
+          // stamp a fresh sale date — unless the bot already reported a
+          // newer status in this same message.
+          if (!updates.payment_status) patch.payment_status = 'Pendiente'
+          patch.sold_at = new Date().toISOString()
+        } else if (!prevSold) {
+          patch.sold_at = new Date().toISOString()
+        }
       }
     }
 
