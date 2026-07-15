@@ -291,6 +291,19 @@ export function DealForm({
     onSaved();
   }
 
+  // Auto-save a single field immediately (edit mode only), mirroring the
+  // inbox sidebar so the user never has to press "Save Changes". Create
+  // mode still uses the explicit button since there's no row to update yet.
+  async function autoSave(patch: Record<string, string | null>) {
+    if (!deal) return;
+    const { error } = await supabase.from("deals").update(patch).eq("id", deal.id);
+    if (error) {
+      toast.error(t("toastFailedSave"));
+      return;
+    }
+    onSaved();
+  }
+
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
@@ -344,6 +357,9 @@ export function DealForm({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => {
+                  if (title.trim()) autoSave({ title: title.trim() });
+                }}
                 placeholder={t("titlePlaceholder")}
                 className="border-border bg-muted text-foreground"
               />
@@ -409,6 +425,9 @@ export function DealForm({
                     type="number"
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
+                    onBlur={() =>
+                      autoSave({ value: value.trim() === "" ? "0" : value.trim() })
+                    }
                     placeholder="0"
                     className="border-border bg-muted pl-7 text-foreground"
                   />
@@ -418,7 +437,10 @@ export function DealForm({
                 <Label className="text-muted-foreground">{t("currency")}</Label>
                 <select
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  onChange={(e) => {
+                    setCurrency(e.target.value);
+                    autoSave({ currency: e.target.value });
+                  }}
                   className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
                 >
                   {CURRENCIES.map((c) => (
@@ -436,7 +458,10 @@ export function DealForm({
                 <Label className="text-muted-foreground">Forma de pago</Label>
                 <select
                   value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  onChange={(e) => {
+                    setPaymentMethod(e.target.value);
+                    autoSave({ payment_method: e.target.value || null });
+                  }}
                   className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                 >
                   <option value="">—</option>
@@ -449,7 +474,10 @@ export function DealForm({
                 <Label className="text-muted-foreground">Estado de pago</Label>
                 <select
                   value={paymentStatus}
-                  onChange={(e) => setPaymentStatus(e.target.value)}
+                  onChange={(e) => {
+                    setPaymentStatus(e.target.value);
+                    autoSave({ payment_status: e.target.value || null });
+                  }}
                   className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
                 >
                   <option value="">—</option>
@@ -464,7 +492,10 @@ export function DealForm({
               <Label className="text-muted-foreground">Grano o molido</Label>
               <select
                 value={grind}
-                onChange={(e) => setGrind(e.target.value)}
+                onChange={(e) => {
+                  setGrind(e.target.value);
+                  autoSave({ grind: e.target.value || null });
+                }}
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
               >
                 <option value="">—</option>
@@ -478,6 +509,7 @@ export function DealForm({
               <Textarea
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
+                onBlur={() => autoSave({ address: address.trim() || null })}
                 placeholder="Dirección de entrega exacta"
                 className="min-h-[60px] border-border bg-muted text-foreground"
               />
@@ -488,6 +520,7 @@ export function DealForm({
               <Input
                 value={nit}
                 onChange={(e) => setNit(e.target.value)}
+                onBlur={() => autoSave({ nit: nit.trim() || null })}
                 placeholder="NIT para factura (opcional)"
                 className="border-border bg-muted text-foreground"
               />
@@ -498,6 +531,9 @@ export function DealForm({
               <Textarea
                 value={comboHistory}
                 onChange={(e) => setComboHistory(e.target.value)}
+                onBlur={() =>
+                  autoSave({ combo_history: comboHistory.trim() || null })
+                }
                 placeholder="Combos que ha comprado con el tiempo"
                 className="min-h-[80px] border-border bg-muted text-foreground"
               />
@@ -506,7 +542,10 @@ export function DealForm({
               <Label className="text-muted-foreground">{t("stage")}</Label>
               <select
                 value={stageId}
-                onChange={(e) => setStageId(e.target.value)}
+                onChange={(e) => {
+                  setStageId(e.target.value);
+                  autoSave({ stage_id: e.target.value });
+                }}
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
               >
                 {stages.map((s) => (
@@ -521,7 +560,10 @@ export function DealForm({
               <Label className="text-muted-foreground">{t("assignedTo")}</Label>
               <select
                 value={assignedTo}
-                onChange={(e) => setAssignedTo(e.target.value)}
+                onChange={(e) => {
+                  setAssignedTo(e.target.value);
+                  autoSave({ assigned_to: e.target.value || null });
+                }}
                 className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary"
               >
                 <option value="">{t("unassigned")}</option>
@@ -538,6 +580,7 @@ export function DealForm({
               <Textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                onBlur={() => autoSave({ notes: notes.trim() || null })}
                 placeholder={t("notesPlaceholder")}
                 className="min-h-[100px] border-border bg-muted text-foreground"
               />
@@ -596,22 +639,37 @@ export function DealForm({
           </div>
 
           <div className="border-t border-border/50 bg-popover/80 p-4">
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                className="flex-1 border-border bg-transparent text-muted-foreground hover:bg-muted"
-              >
-                {t("cancel")}
-              </Button>
-              <Button
-                onClick={handleSave}
-                disabled={saving || !title.trim() || !contactId || !stageId}
-                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {saving ? t("saving") : deal ? t("saveChanges") : t("createDeal")}
-              </Button>
-            </div>
+            {deal ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-center text-xs text-muted-foreground">
+                  Los cambios se guardan automáticamente
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                  className="w-full border-border bg-transparent text-muted-foreground hover:bg-muted"
+                >
+                  Cerrar
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                  className="flex-1 border-border bg-transparent text-muted-foreground hover:bg-muted"
+                >
+                  {t("cancel")}
+                </Button>
+                <Button
+                  onClick={handleSave}
+                  disabled={saving || !title.trim() || !contactId || !stageId}
+                  className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {saving ? t("saving") : t("createDeal")}
+                </Button>
+              </div>
+            )}
 
             {deal &&
               (confirmDelete ? (
