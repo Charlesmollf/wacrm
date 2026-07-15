@@ -16,13 +16,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import {
-  MessageSquare,
-  UserPlus,
-  BarChart3,
-  ShoppingBag,
-  Loader2,
-} from "lucide-react";
+import { Activity, BarChart3, ShoppingBag, Loader2 } from "lucide-react";
 
 const DAYS = 30;
 
@@ -52,6 +46,29 @@ function shortLabel(key: string): string {
     day: "numeric",
   });
 }
+
+// Theme-aware text colour for chart axes/legends. CSS variables don't
+// resolve when recharts sets them as SVG `fill` attributes, so we pick a
+// concrete colour: light grey on dark theme, dark grey on light theme.
+function useAxisColor(): string {
+  const [dark, setDark] = useState(true);
+  useEffect(() => {
+    const el = document.documentElement;
+    const update = () => setDark(el.classList.contains("dark"));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    update();
+    const obs = new MutationObserver(update);
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+  return dark ? "#cbd5e1" : "#475569";
+}
+
+const COLORS = {
+  conversaciones: "#3b82f6", // azul
+  ventas: "#22c55e", // verde
+  contactos: "#7c3aed", // violeta
+};
 
 function Card({
   title,
@@ -88,16 +105,16 @@ function Loading() {
   );
 }
 
-const AXIS = "var(--muted-foreground)";
-
 // ---------------------------------------------------------------------------
-// 1) Conversaciones vs Ventas (30 días): personas que escriben por día
-//    contrastado con ventas por día (pedidos confirmados, por fecha de
-//    generación del deal — no de aprobación).
+// Actividad diaria (30 días): conversaciones + ventas + contactos nuevos.
+// Ventas se cuentan por fecha de la venta (sold_at), no por cuándo se creó
+// el deal — así la compra aparece el día real en que el cliente compró.
 // ---------------------------------------------------------------------------
-export function ConversationsVsSalesChart() {
+export function ActivityChart() {
+  const axis = useAxisColor();
   const [data, setData] = useState<
-    { day: string; conversaciones: number; ventas: number }[] | null
+    { day: string; conversaciones: number; ventas: number; contactos: number }[]
+    | null
   >(null);
 
   useEffect(() => {
@@ -109,27 +126,26 @@ export function ConversationsVsSalesChart() {
       since.setHours(0, 0, 0, 0);
       const sinceIso = since.toISOString();
 
-      const [{ data: msgs }, { data: stages }] = await Promise.all([
-        db
-          .from("messages")
-          .select("conversation_id, created_at")
-          .eq("sender_type", "customer")
-          .gte("created_at", sinceIso)
-          .limit(20000),
-        db.from("pipeline_stages").select("id").ilike("name", "Pedido Confirmado"),
-      ]);
-
-      const stageIds = ((stages ?? []) as { id: string }[]).map((s) => s.id);
-      let deals: { created_at: string }[] = [];
-      if (stageIds.length > 0) {
-        const { data: dd } = await db
-          .from("deals")
-          .select("created_at, stage_id")
-          .in("stage_id", stageIds)
-          .gte("created_at", sinceIso)
-          .limit(20000);
-        deals = (dd ?? []) as { created_at: string }[];
-      }
+      const [{ data: msgs }, { data: sales }, { data: contacts }] =
+        await Promise.all([
+          db
+            .from("messages")
+            .select("conversation_id, created_at")
+            .eq("sender_type", "customer")
+            .gte("created_at", sinceIso)
+            .limit(20000),
+          db
+            .from("deals")
+            .select("sold_at")
+            .not("sold_at", "is", null)
+            .gte("sold_at", sinceIso)
+            .limit(20000),
+          db
+            .from("contacts")
+            .select("created_at")
+            .gte("created_at", sinceIso)
+            .limit(20000),
+        ]);
       if (cancelled) return;
 
       const convByDay = new Map<string, Set<string>>();
@@ -142,9 +158,14 @@ export function ConversationsVsSalesChart() {
         if (m.conversation_id) convByDay.get(k)!.add(m.conversation_id);
       }
       const salesByDay = new Map<string, number>();
-      for (const d of deals) {
-        const k = ymd(new Date(d.created_at));
+      for (const s of (sales ?? []) as { sold_at: string }[]) {
+        const k = ymd(new Date(s.sold_at));
         salesByDay.set(k, (salesByDay.get(k) ?? 0) + 1);
+      }
+      const contactsByDay = new Map<string, number>();
+      for (const c of (contacts ?? []) as { created_at: string }[]) {
+        const k = ymd(new Date(c.created_at));
+        contactsByDay.set(k, (contactsByDay.get(k) ?? 0) + 1);
       }
 
       setData(
@@ -152,6 +173,7 @@ export function ConversationsVsSalesChart() {
           day: k,
           conversaciones: convByDay.get(k)?.size ?? 0,
           ventas: salesByDay.get(k) ?? 0,
+          contactos: contactsByDay.get(k) ?? 0,
         })),
       );
     })();
@@ -162,9 +184,9 @@ export function ConversationsVsSalesChart() {
 
   return (
     <Card
-      title="Conversaciones vs Ventas"
-      subtitle="Personas que escriben vs ventas por día (últimos 30 días)"
-      icon={MessageSquare}
+      title="Conversaciones, ventas y contactos"
+      subtitle="Actividad por día (últimos 30 días)"
+      icon={Activity}
     >
       {data === null ? (
         <Loading />
@@ -175,11 +197,11 @@ export function ConversationsVsSalesChart() {
             <XAxis
               dataKey="day"
               tickFormatter={(v) => shortLabel(String(v))}
-              tick={{ fill: AXIS, fontSize: 11 }}
+              tick={{ fill: axis, fontSize: 11 }}
               interval="preserveStartEnd"
               minTickGap={24}
             />
-            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 11 }} width={28} />
+            <YAxis allowDecimals={false} tick={{ fill: axis, fontSize: 11 }} width={28} />
             <Tooltip
               labelFormatter={(v) => shortLabel(String(v))}
               contentStyle={{
@@ -188,13 +210,14 @@ export function ConversationsVsSalesChart() {
                 borderRadius: 8,
                 fontSize: 12,
               }}
+              labelStyle={{ color: axis }}
             />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 12, color: axis }} />
             <Line
               type="monotone"
               dataKey="conversaciones"
               name="Conversaciones"
-              stroke="#3b82f6"
+              stroke={COLORS.conversaciones}
               strokeWidth={2}
               dot={false}
             />
@@ -202,82 +225,15 @@ export function ConversationsVsSalesChart() {
               type="monotone"
               dataKey="ventas"
               name="Ventas"
-              stroke="#22c55e"
+              stroke={COLORS.ventas}
               strokeWidth={2}
               dot={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      )}
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 2) Nuevos contactos por día (30 días)
-// ---------------------------------------------------------------------------
-export function NewContactsChart() {
-  const [data, setData] = useState<{ day: string; nuevos: number }[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const db = createClient();
-      const since = new Date();
-      since.setDate(since.getDate() - (DAYS - 1));
-      since.setHours(0, 0, 0, 0);
-      const { data: contacts } = await db
-        .from("contacts")
-        .select("created_at")
-        .gte("created_at", since.toISOString())
-        .limit(20000);
-      if (cancelled) return;
-      const byDay = new Map<string, number>();
-      for (const c of (contacts ?? []) as { created_at: string }[]) {
-        const k = ymd(new Date(c.created_at));
-        byDay.set(k, (byDay.get(k) ?? 0) + 1);
-      }
-      setData(lastNDays(DAYS).map((k) => ({ day: k, nuevos: byDay.get(k) ?? 0 })));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <Card
-      title="Nuevos contactos"
-      subtitle="Contactos nuevos por día (últimos 30 días)"
-      icon={UserPlus}
-    >
-      {data === null ? (
-        <Loading />
-      ) : (
-        <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis
-              dataKey="day"
-              tickFormatter={(v) => shortLabel(String(v))}
-              tick={{ fill: AXIS, fontSize: 11 }}
-              interval="preserveStartEnd"
-              minTickGap={24}
-            />
-            <YAxis allowDecimals={false} tick={{ fill: AXIS, fontSize: 11 }} width={28} />
-            <Tooltip
-              labelFormatter={(v) => shortLabel(String(v))}
-              contentStyle={{
-                background: "var(--popover)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
             />
             <Line
               type="monotone"
-              dataKey="nuevos"
-              name="Nuevos contactos"
-              stroke="#7c3aed"
+              dataKey="contactos"
+              name="Contactos nuevos"
+              stroke={COLORS.contactos}
               strokeWidth={2}
               dot={false}
             />
@@ -289,9 +245,10 @@ export function NewContactsChart() {
 }
 
 // ---------------------------------------------------------------------------
-// 3) Valor del pipeline por columna (barras)
+// Valor del pipeline por columna (barras) — compacta.
 // ---------------------------------------------------------------------------
 export function PipelineValueBars({ currency }: { currency: string }) {
+  const axis = useAxisColor();
   const [data, setData] = useState<
     { name: string; value: number; color: string }[] | null
   >(null);
@@ -343,20 +300,20 @@ export function PipelineValueBars({ currency }: { currency: string }) {
       {data === null ? (
         <Loading />
       ) : (
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={data} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
             <XAxis
               dataKey="name"
-              tick={{ fill: AXIS, fontSize: 11 }}
+              tick={{ fill: axis, fontSize: 10 }}
               interval={0}
-              angle={-15}
+              angle={-20}
               textAnchor="end"
-              height={50}
+              height={54}
             />
             <YAxis
-              tick={{ fill: AXIS, fontSize: 11 }}
-              width={64}
+              tick={{ fill: axis, fontSize: 10 }}
+              width={58}
               tickFormatter={(v) => fmt(Number(v))}
             />
             <Tooltip
@@ -367,6 +324,7 @@ export function PipelineValueBars({ currency }: { currency: string }) {
                 borderRadius: 8,
                 fontSize: 12,
               }}
+              labelStyle={{ color: axis }}
             />
             <Bar dataKey="value" name="Valor" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => (
@@ -381,7 +339,7 @@ export function PipelineValueBars({ currency }: { currency: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// 4) Compras recientes (reemplaza el feed de actividad)
+// Compras recientes.
 // ---------------------------------------------------------------------------
 interface PurchaseRow {
   id: string;
