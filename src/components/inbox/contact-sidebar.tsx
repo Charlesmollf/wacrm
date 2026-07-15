@@ -44,6 +44,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [address, setAddress] = useState("");
   const [nit, setNit] = useState("");
   const [combos, setCombos] = useState("");
+  const [dealValue, setDealValue] = useState("");
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
@@ -82,6 +83,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
       setAddress(d?.address ?? "");
       setNit(d?.nit ?? "");
       setCombos(d?.combo_history ?? "");
+      setDealValue(d?.value != null ? String(d.value) : "");
     }
     if (notesRes.data) setNotes(notesRes.data);
     if (tagsRes.data) {
@@ -280,6 +282,21 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                   Detalle del pedido
                 </div>
                 <div className="mt-2 space-y-2">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                      Q
+                    </span>
+                    <input
+                      type="number"
+                      value={dealValue}
+                      onChange={(e) => setDealValue(e.target.value)}
+                      onBlur={() =>
+                        saveDealField({ value: dealValue.trim() === "" ? null : dealValue.trim() })
+                      }
+                      placeholder="Venta (monto total)"
+                      className="h-8 w-full rounded-lg border border-border bg-muted pl-5 pr-2 text-xs text-foreground outline-none focus:border-primary"
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <select
                       value={pMethod}
