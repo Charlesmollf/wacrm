@@ -526,6 +526,52 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
     case 'create_deal': {
       const cfg = step.step_config as CreateDealStepConfig
       if (!cfg.pipeline_id || !cfg.stage_id) throw new Error('create_deal needs pipeline + stage')
+
+      // One deal per contact per pipeline — never duplicate. A contact who
+      // already has a deal and messages again should NOT spawn a second
+      // card. Behaviour depends on the existing deal's state:
+      //   - closed (won/lost): a past customer is re-engaging, so we reopen
+      //     the deal into the "Negociación" stage (new negotiation).
+      //   - still open: it's already live in the pipeline; leave it where it
+      //     is so we don't yank an active deal back a stage.
+      const { data: existingDeal } = await db
+        .from('deals')
+        .select('id, status')
+        .eq('account_id', args.automation.account_id)
+        .eq('contact_id', args.contactId)
+        .eq('pipeline_id', cfg.pipeline_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (existingDeal) {
+        const status = (existingDeal as { status?: string | null }).status
+        if (status === 'won' || status === 'lost') {
+          // Returning customer → reopen into Negociación (fallback to the
+          // configured new-lead stage if that stage doesn't exist).
+          const { data: negStage } = await db
+            .from('pipeline_stages')
+            .select('id')
+            .eq('pipeline_id', cfg.pipeline_id)
+            .ilike('name', 'Negociaci%')
+            .order('position', { ascending: true })
+            .limit(1)
+            .maybeSingle()
+          await db
+            .from('deals')
+            .update({
+              stage_id: (negStage as { id?: string } | null)?.id ?? cfg.stage_id,
+              status: 'open',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', (existingDeal as { id: string }).id)
+          return 'returning lead reopened into Negociación'
+        }
+        // Already active in the pipeline — no duplicate, no change.
+        return 'existing open deal, no duplicate created'
+      }
+
+      // New contact (no deal yet) → create in the configured stage.
       // Match the account's configured default currency rather than
       // the static `deals.currency` DB default — keeps automation-
       // created deals consistent with the one-currency-per-account
