@@ -47,22 +47,43 @@ function shortLabel(key: string): string {
   });
 }
 
-// Theme-aware text colour for chart axes/legends. CSS variables don't
-// resolve when recharts sets them as SVG `fill` attributes, so we pick a
-// concrete colour: light grey on dark theme, dark grey on light theme.
+// Theme-aware text colour for chart axes/legends/tooltips. CSS variables
+// don't resolve when recharts sets them as SVG `fill` attributes, so we
+// read the *resolved* --foreground colour off a hidden probe element and
+// pass the concrete rgb() value. This is white-ish on the dark theme and
+// dark on the light theme, and re-reads whenever the theme changes.
 function useAxisColor(): string {
-  const [dark, setDark] = useState(true);
+  const [color, setColor] = useState("#e5e7eb");
   useEffect(() => {
-    const el = document.documentElement;
-    const update = () => setDark(el.classList.contains("dark"));
+    const probe = document.createElement("span");
+    probe.style.color = "var(--foreground)";
+    probe.style.position = "absolute";
+    probe.style.visibility = "hidden";
+    probe.style.pointerEvents = "none";
+    document.body.appendChild(probe);
+    const read = () => {
+      const c = getComputedStyle(probe).color;
+      if (c) setColor(c);
+    };
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    update();
-    const obs = new MutationObserver(update);
-    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
-    return () => obs.disconnect();
+    read();
+    const obs = new MutationObserver(read);
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme"],
+    });
+    return () => {
+      obs.disconnect();
+      probe.remove();
+    };
   }, []);
-  return dark ? "#cbd5e1" : "#475569";
+  return color;
 }
+
+// Days with more new contacts than this are treated as bulk imports and
+// hidden from the activity chart so a one-time spike doesn't flatten the
+// scale for the small day-to-day numbers. The data itself is untouched.
+const CONTACT_SPIKE_CAP = 50;
 
 const COLORS = {
   conversaciones: "#3b82f6", // azul
@@ -113,7 +134,7 @@ function Loading() {
 export function ActivityChart() {
   const axis = useAxisColor();
   const [data, setData] = useState<
-    { day: string; conversaciones: number; ventas: number; contactos: number }[]
+    { day: string; conversaciones: number; ventas: number; contactos: number | null }[]
     | null
   >(null);
 
@@ -169,12 +190,16 @@ export function ActivityChart() {
       }
 
       setData(
-        lastNDays(DAYS).map((k) => ({
-          day: k,
-          conversaciones: convByDay.get(k)?.size ?? 0,
-          ventas: salesByDay.get(k) ?? 0,
-          contactos: contactsByDay.get(k) ?? 0,
-        })),
+        lastNDays(DAYS).map((k) => {
+          const c = contactsByDay.get(k) ?? 0;
+          return {
+            day: k,
+            conversaciones: convByDay.get(k)?.size ?? 0,
+            ventas: salesByDay.get(k) ?? 0,
+            // Hide bulk-import spikes so the scale stays readable.
+            contactos: c > CONTACT_SPIKE_CAP ? null : c,
+          };
+        }),
       );
     })();
     return () => {
@@ -211,6 +236,7 @@ export function ActivityChart() {
                 fontSize: 12,
               }}
               labelStyle={{ color: axis }}
+              itemStyle={{ color: axis }}
             />
             <Legend wrapperStyle={{ fontSize: 12, color: axis }} />
             <Line
@@ -325,6 +351,7 @@ export function PipelineValueBars({ currency }: { currency: string }) {
                 fontSize: 12,
               }}
               labelStyle={{ color: axis }}
+              itemStyle={{ color: axis }}
             />
             <Bar dataKey="value" name="Valor" radius={[4, 4, 0, 0]}>
               {data.map((d, i) => (
