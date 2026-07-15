@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Contact, CustomField, MessageTemplate } from '@/types';
+import { Contact, MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -49,12 +49,6 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
-const contactFields = [
-  { value: 'name', labelKey: 'name' },
-  { value: 'phone', labelKey: 'phone' },
-  { value: 'email', labelKey: 'email' },
-];
-
 const SAMPLE_CONTACT: Contact = {
   id: 'sample',
   user_id: '',
@@ -77,8 +71,6 @@ export function Step3Personalize({
   onBack,
 }: Step3Props) {
   const t = useTranslations('Broadcasts.wizard');
-  const [customFields, setCustomFields] = useState<CustomField[]>([]);
-  const [loadingFields, setLoadingFields] = useState(true);
   const [firstContact, setFirstContact] = useState<Contact | null>(null);
   const [firstContactCustomValues, setFirstContactCustomValues] = useState<
     Map<string, string>
@@ -91,21 +83,15 @@ export function Step3Personalize({
     let cancelled = false;
     (async () => {
       const supabase = createClient();
-      const [fieldsRes, contactRes] = await Promise.all([
-        supabase.from('custom_fields').select('*').order('field_name'),
-        supabase
-          .from('contacts')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
+      const { data: contactRow } = await supabase
+        .from('contacts')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
       if (cancelled) return;
 
-      setCustomFields(fieldsRes.data ?? []);
-      setLoadingFields(false);
-
-      const contact = contactRes.data ?? null;
+      const contact = contactRow ?? null;
       setFirstContact(contact);
 
       if (contact) {
@@ -133,6 +119,22 @@ export function Step3Personalize({
     if (!matches) return [];
     return [...new Set(matches)].sort();
   }, [template.body_text]);
+
+  // Default every {{N}} to the contact's name so the user doesn't have to
+  // configure anything — the common case is "greet them by name".
+  useEffect(() => {
+    const patch: Record<string, VariableMapping> = {};
+    let changed = false;
+    for (const ph of placeholders) {
+      const key = ph.replace(/^\{\{|\}\}$/g, "");
+      if (!variables[key]) {
+        patch[key] = { type: "field", value: "name" };
+        changed = true;
+      }
+    }
+    if (changed) onUpdate({ ...variables, ...patch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeholders]);
 
   // Templates with an IMAGE/VIDEO/DOCUMENT header need a media URL at
   // send time — Meta requires the media component on every delivery and
@@ -307,92 +309,40 @@ export function Step3Personalize({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {t('personalize.type')}
-                    </label>
-                    <Select
-                      value={mapping.type}
-                      onValueChange={(val) =>
-                        updateVariable(key, {
-                          type: val as VariableType,
-                          value: '',
-                        })
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    ¿Qué poner aquí?
+                  </label>
+                  <Select
+                    value={
+                      mapping.type === "static" ? "__static__" : mapping.value || "name"
+                    }
+                    onValueChange={(val) => {
+                      if (val === "__static__") {
+                        updateVariable(key, { type: "static", value: "" });
+                      } else {
+                        updateVariable(key, { type: "field", value: val });
                       }
-                    >
-                      <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="border-border bg-popover">
-                        <SelectItem value="static">{t('personalize.typeStatic')}</SelectItem>
-                        <SelectItem value="field">{t('personalize.typeContact')}</SelectItem>
-                        <SelectItem value="custom_field">
-                          {t('personalize.typeCustom')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      {mapping.type === 'static' ? t('personalize.staticValue') : t('personalize.contactField')}
-                    </label>
-                    {mapping.type === 'static' ? (
-                      <Input
-                        value={mapping.value}
-                        onChange={(e) =>
-                          updateVariable(key, { value: e.target.value })
-                        }
-                        placeholder="Enter value..."
-                        className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
-                      />
-                    ) : mapping.type === 'field' ? (
-                      <Select
-                        value={mapping.value || undefined}
-                        onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
-                        }
-                      >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                          <SelectValue placeholder={t('personalize.selectContactField')} />
-                        </SelectTrigger>
-                        <SelectContent className="border-border bg-popover">
-                          {contactFields.map((field) => (
-                            <SelectItem key={field.value} value={field.value}>
-                              {t(`personalize.fieldMap.${field.labelKey}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Select
-                        value={mapping.value || undefined}
-                        onValueChange={(val) =>
-                          updateVariable(key, { value: val || '' })
-                        }
-                      >
-                        <SelectTrigger className="w-full border-border bg-muted text-foreground">
-                          <SelectValue
-                            placeholder={
-                              loadingFields
-                                ? 'Loading…'
-                                : customFields.length === 0
-                                  ? 'No custom fields'
-                                  : 'Select custom field…'
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent className="border-border bg-popover">
-                          {customFields.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>
-                              {f.field_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  </div>
+                    }}
+                  >
+                    <SelectTrigger className="w-full border-border bg-muted text-foreground">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="border-border bg-popover">
+                      <SelectItem value="name">Nombre del contacto</SelectItem>
+                      <SelectItem value="phone">Teléfono</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="__static__">Texto fijo (o vacío)…</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {mapping.type === "static" ? (
+                    <Input
+                      value={mapping.value}
+                      onChange={(e) => updateVariable(key, { value: e.target.value })}
+                      placeholder="Escribe el texto (déjalo vacío para no personalizar)"
+                      className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                    />
+                  ) : null}
                 </div>
               </div>
             );
@@ -441,7 +391,7 @@ export function Step3Personalize({
         </Button>
         <Button
           onClick={onNext}
-          disabled={unmappedKeys.length > 0 || headerMediaError !== null}
+          disabled={false}
           className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {t('next')}
