@@ -301,7 +301,9 @@ export function DealForm({
       toast.error(t("toastFailedSave"));
       return;
     }
-    onSaved();
+    // Note: we intentionally do NOT call onSaved() here. Refetching the
+    // whole board on every field edit is heavy on large pipelines; instead
+    // the board refreshes once when the sheet closes (see Sheet onOpenChange).
   }
 
   async function handleStatusChange(status: DealStatus) {
@@ -339,7 +341,14 @@ export function DealForm({
   }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      onOpenChange={(o) => {
+        // On close, sync the board once so autosaved edits show up.
+        if (!o) onSaved();
+        onOpenChange(o);
+      }}
+    >
       <SheetContent
         side="right"
         className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
