@@ -27,10 +27,10 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   'EXTRACCION DE DATOS (INVISIBLE): Cuando en la conversacion el cliente indique o tu confirmes cualquiera de estos datos, agrega al FINAL del mensaje UNA sola marca con este formato EXACTO: ' +
   '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
-  'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Pagado; molienda = Grano | Molido; ' +
+  'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido; ' +
   'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; ' +
   'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. ' +
-  'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Pagado y forma_pago segun ese comprobante. ' +
+  'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
 
 const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
@@ -63,6 +63,7 @@ function mapPaymentMethod(v: string): string {
 }
 function mapPaymentStatus(v: string): string {
   const s = v.toLowerCase()
+  if (s.includes('confirm')) return 'Por confirmar'
   if (s.includes('pagad')) return 'Pagado'
   if (s.includes('pendiente')) return 'Pendiente'
   return v.trim()
