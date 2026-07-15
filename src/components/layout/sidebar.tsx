@@ -238,7 +238,7 @@ export function Sidebar({ open = false, onClose }: SidebarProps) {
                     )}
                   >
                     <item.icon className="h-4 w-4" />
-                    <span className="flex-1">{t(item.labelKey as string)}</span>
+                    <span className="flex-1">{item.href === "/payments" ? "Confirmar pagos" : t(item.labelKey as string)}</span>
                     {item.beta && (
                       <span
                         aria-label={t("beta")}
