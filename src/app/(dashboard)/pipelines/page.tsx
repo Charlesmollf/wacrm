@@ -53,6 +53,7 @@ const SPEC_DEFAULT_STAGES = [
 
 const PAYMENT_STATUSES: { value: string; color: string }[] = [
   { value: "Pendiente", color: "#f59e0b" },
+  { value: "Por confirmar", color: "#3b82f6" },
   { value: "Pagado", color: "#10b981" },
 ];
 
