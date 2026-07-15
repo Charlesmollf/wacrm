@@ -52,6 +52,15 @@ export function PipelineBoard({
       const bucket = map.get(deal.stage_id);
       if (bucket) bucket.push(deal);
     }
+    // Order each column by most recent inbound message (newest on top).
+    // Cards with no inbound timestamp fall to the bottom.
+    const inboundTs = (d: Deal): number => {
+      const t = d.conv?.last_inbound_at;
+      return t ? new Date(t).getTime() : 0;
+    };
+    for (const bucket of map.values()) {
+      bucket.sort((a, b) => inboundTs(b) - inboundTs(a));
+    }
     return map;
   }, [sortedStages, deals]);
 
