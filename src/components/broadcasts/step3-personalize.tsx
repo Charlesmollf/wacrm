@@ -321,7 +321,7 @@ export function Step3Personalize({
                       if (val === "__static__") {
                         updateVariable(key, { type: "static", value: "" });
                       } else {
-                        updateVariable(key, { type: "field", value: val });
+                        updateVariable(key, { type: "field", value: val ?? "name" });
                       }
                     }}
                   >
