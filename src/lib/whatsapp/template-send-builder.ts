@@ -114,7 +114,15 @@ function buildHeaderComponent(
   // sample (`example.header_handle`); it is NOT a reusable send-time
   // media id, and passing it as `{ id }` makes Meta reject the send. Only
   // an explicit `headerMediaId` (a real /media upload id) is honored.
-  const link = params.headerMediaUrl ?? template.header_media_url;
+  // Fall back to the Meta-synced example handle when it's a fetchable
+  // lookaside URL — synced templates often have header_handle set but
+  // header_media_url empty, which used to fail every send.
+  const handleUrl =
+    template.header_handle && /^https?:\/\//.test(template.header_handle)
+      ? template.header_handle
+      : undefined;
+  const link =
+    params.headerMediaUrl ?? template.header_media_url ?? handleUrl;
   const id = params.headerMediaId;
   if (!link && !id) {
     throw new Error(
