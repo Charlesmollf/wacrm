@@ -29,6 +29,9 @@ interface Step3Props {
   /** Media URL for an IMAGE/VIDEO/DOCUMENT header, when the template has one. */
   headerMediaUrl: string;
   onHeaderMediaUrlChange: (url: string) => void;
+  /** Carousel card media URLs (only for CAROUSEL templates). */
+  carouselMedia?: string[];
+  onCarouselMediaChange?: (urls: string[]) => void;
   onNext: () => void;
   onBack: () => void;
 }
@@ -67,6 +70,8 @@ export function Step3Personalize({
   onUpdate,
   headerMediaUrl,
   onHeaderMediaUrlChange,
+  carouselMedia,
+  onCarouselMediaChange,
   onNext,
   onBack,
 }: Step3Props) {
@@ -113,6 +118,22 @@ export function Step3Personalize({
       cancelled = true;
     };
   }, []);
+
+  const carouselCards = template.carousel_cards ?? [];
+
+  // Seed the per-card URL list from the template the first time a
+  // carousel template lands here (Meta sync stores a usable URL per
+  // card, so the common case needs no typing).
+  useEffect(() => {
+    if (
+      carouselCards.length > 0 &&
+      onCarouselMediaChange &&
+      (!carouselMedia || carouselMedia.length === 0)
+    ) {
+      onCarouselMediaChange(carouselCards.map((c) => c.media_url ?? ""));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carouselCards.length]);
 
   const placeholders = useMemo(() => {
     const matches = template.body_text.match(/\{\{(\d+)\}\}/g);
@@ -283,6 +304,63 @@ export function Step3Personalize({
                 : 'Enter a valid http(s) URL.'}
             </p>
           )}
+        </div>
+      )}
+
+      {carouselCards.length > 0 && (
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <ImageIcon className="h-4 w-4 text-primary" />
+            <p className="text-sm font-medium text-foreground">
+              Tarjetas del carrusel ({carouselCards.length})
+            </p>
+          </div>
+          <div className="space-y-3">
+            {carouselCards.map((card, i) => {
+              const value = carouselMedia?.[i] ?? "";
+              return (
+                <div key={i} className="rounded-lg border border-border p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      Tarjeta {i + 1}
+                    </span>
+                    {card.body_text ? (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {card.body_text}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {value && isValidHttpUrl(value) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={value}
+                        alt={`Tarjeta ${i + 1}`}
+                        className="h-14 w-14 shrink-0 rounded-md border border-border object-cover"
+                      />
+                    ) : null}
+                    <Input
+                      type="url"
+                      value={value}
+                      onChange={(e) => {
+                        if (!onCarouselMediaChange) return;
+                        const next = [...(carouselMedia ?? [])];
+                        while (next.length < carouselCards.length) next.push("");
+                        next[i] = e.target.value;
+                        onCarouselMediaChange(next);
+                      }}
+                      placeholder="URL pública de la imagen de esta tarjeta"
+                      className="border-border bg-muted text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Cada tarjeta necesita la URL de su imagen. Se rellenan solas desde
+            Meta al sincronizar plantillas.
+          </p>
         </div>
       )}
 
