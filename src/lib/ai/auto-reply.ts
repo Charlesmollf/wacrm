@@ -114,11 +114,17 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    })
+    // One retry on transient provider failures (overloaded / network
+    // blip): a single hiccup must not leave the customer unanswered.
+    let reply
+    try {
+      reply = await generateReply({ config, systemPrompt, messages })
+    } catch (genErr) {
+      console.error('[ai auto-reply] generateReply failed, retrying once:', genErr)
+      await new Promise((r) => setTimeout(r, 2000))
+      reply = await generateReply({ config, systemPrompt, messages })
+    }
+    const { text, handoff, usage } = reply
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`

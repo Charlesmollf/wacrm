@@ -4,6 +4,7 @@ import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } from './deal-updates'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { dispatchInboundToAiReply } from './auto-reply'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -99,7 +100,10 @@ export async function dispatchInboundImageToAiReply(
       const mt = (contentType || mimeType || '').toLowerCase().split(';')[0]
       mediaType = VISION_MEDIA_TYPES.has(mt) ? mt : 'image/jpeg'
     } catch (err) {
-      console.error('[ai image-reply] media fetch failed:', err)
+      // Vision path broke — fall back to the plain-text auto-reply so
+      // the customer still gets an answer instead of silence.
+      console.error('[ai image-reply] media fetch failed, falling back to text reply:', err)
+      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
       return
     }
 
@@ -153,11 +157,12 @@ export async function dispatchInboundImageToAiReply(
       })
       if (!res.ok) {
         console.error(
-          '[ai image-reply] Anthropic error:',
+          '[ai image-reply] Anthropic error, falling back to text reply:',
           res.status,
           await res.text().catch(() => ''),
         )
-        return
+        await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+      return
       }
       const data = (await res.json().catch(() => null)) as {
         content?: { type?: string; text?: string }[]
@@ -168,11 +173,15 @@ export async function dispatchInboundImageToAiReply(
         .join('')
         .trim()
     } catch (err) {
-      console.error('[ai image-reply] vision call failed:', err)
+      console.error('[ai image-reply] vision call failed, falling back to text reply:', err)
+      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
       return
     }
 
-    if (!text) return
+    if (!text) {
+      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+      return
+    }
 
     // Atomically claim a reply slot (same cap guard the text path uses).
     const { data: claimed, error: claimErr } = await db.rpc(
