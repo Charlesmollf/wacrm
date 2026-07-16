@@ -58,6 +58,71 @@ interface NewRecipient {
   messageParams?: SendTimeParams
 }
 
+/** Substitute {{N}} placeholders in the template body with the
+ *  per-recipient params so the persisted chat message reads like what
+ *  the customer actually received. */
+function renderTemplateBody(bodyText: string, params: string[]): string {
+  return bodyText.replace(/\{\{(\d+)\}\}/g, (m, n) => {
+    const idx = Number(n) - 1
+    return params[idx] !== undefined && params[idx] !== ''
+      ? String(params[idx])
+      : m
+  })
+}
+
+/**
+ * Record the broadcast send in the contact's newest conversation so it
+ * shows up in the inbox thread (broadcasts used to be invisible in
+ * chat history). Best-effort: contacts without a conversation are
+ * skipped — we don't create hundreds of new threads from one campaign.
+ */
+async function persistBroadcastMessage(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  args: {
+    accountId: string
+    phone: string
+    text: string
+    wamid: string
+    templateName?: string
+  },
+): Promise<void> {
+  try {
+    const digits = args.phone.replace(/\D/g, '')
+    const { data: contact } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('account_id', args.accountId)
+      .eq('phone_normalized', digits)
+      .maybeSingle()
+    if (!contact) return
+    const { data: conv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('contact_id', (contact as { id: string }).id)
+      .order('last_message_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!conv) return
+    const now = new Date().toISOString()
+    await supabase.from('messages').insert({
+      conversation_id: (conv as { id: string }).id,
+      sender_type: 'agent',
+      content_type: 'text',
+      content_text: args.text,
+      template_name: args.templateName ?? null,
+      message_id: args.wamid,
+      status: 'sent',
+    })
+    await supabase
+      .from('conversations')
+      .update({ last_message_at: now, last_outbound_at: now })
+      .eq('id', (conv as { id: string }).id)
+  } catch (err) {
+    // Never fail the send because chat persistence hiccuped.
+    console.error('[broadcast] persist message failed:', err)
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -232,6 +297,17 @@ export async function POST(request: Request) {
           whatsapp_message_id: sentMessageId,
         })
         sentCount++
+        // Make the broadcast visible in the contact's chat thread.
+        await persistBroadcastMessage(supabase, {
+          accountId,
+          phone: sanitized,
+          text: renderTemplateBody(
+            templateRow?.body_text ?? `[plantilla ${template_name}]`,
+            recipient.params ?? recipient.messageParams?.body ?? [],
+          ),
+          wamid: sentMessageId,
+          templateName: template_name,
+        })
       } else {
         console.error(
           `Failed to send broadcast to ${recipient.phone}:`,
