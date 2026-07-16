@@ -46,6 +46,8 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  /** Media URLs for CAROUSEL cards, indexed by card position. */
+  carouselMedia?: string[];
 }
 
 interface UseBroadcastSendingReturn {
@@ -451,8 +453,17 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         headerType === 'video' ||
         headerType === 'document';
       const headerMediaUrl = payload.headerMediaUrl?.trim();
+      const hasCarousel = Boolean(payload.template.carousel_cards?.length);
+      const carouselCardMedia = hasCarousel
+        ? (payload.carouselMedia ?? []).map((u) => u.trim())
+        : undefined;
       const messageParams =
-        isMediaHeader && headerMediaUrl ? { headerMediaUrl } : undefined;
+        (isMediaHeader && headerMediaUrl) || carouselCardMedia
+          ? {
+              ...(isMediaHeader && headerMediaUrl ? { headerMediaUrl } : {}),
+              ...(carouselCardMedia ? { carouselCardMedia } : {}),
+            }
+          : undefined;
 
       for (let i = 0; i < recipients.length; i += SEND_BATCH_SIZE) {
         const batch = recipients.slice(i, i + SEND_BATCH_SIZE);
