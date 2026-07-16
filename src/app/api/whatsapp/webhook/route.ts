@@ -854,15 +854,25 @@ async function processMessage(
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
   if (!flowConsumed && !interactiveReplyId) {
-    if (message.type === 'image' && message.image?.id) {
-      // Customer sent a photo/screenshot — let the agent "see" it and
-      // reply (identify the product, etc.). Separate vision path.
+    // Stickers are just webp images — route them through the same
+    // vision path so a sticker-only inbound still gets a reply instead
+    // of being silently ignored (it matches neither the image branch
+    // nor the non-empty-text branch).
+    const inboundMediaId =
+      message.type === 'image'
+        ? message.image?.id
+        : message.type === 'sticker'
+          ? message.sticker?.id
+          : undefined
+    if (inboundMediaId) {
+      // Customer sent a photo/screenshot/sticker — let the agent "see"
+      // it and reply (identify the product, etc.). Separate vision path.
       await dispatchInboundImageToAiReply({
         accountId,
         conversationId: conversation.id,
         contactId: contactRecord.id,
         configOwnerUserId,
-        mediaId: message.image.id,
+        mediaId: inboundMediaId,
         accessToken,
         caption: inboundText.trim() || undefined,
       })
