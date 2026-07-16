@@ -30,7 +30,7 @@
  * not a 400 from Meta that doesn't say which field broke.
  */
 
-import type { MessageTemplate, TemplateButton } from '@/types';
+import type { CarouselCard, MessageTemplate, TemplateButton } from '@/types';
 import { extractVariableIndices } from './template-validators';
 
 export interface SendTimeParams {
@@ -49,6 +49,16 @@ export interface SendTimeParams {
    * override at send time.
    */
   buttonParams?: Record<number, string>;
+  /**
+   * Media URLs for CAROUSEL cards, indexed by card position. Falls
+   * back to each card's stored `media_url` when omitted.
+   */
+  carouselCardMedia?: string[];
+}
+
+export interface MetaCarouselCardPayload {
+  card_index: number;
+  components: MetaSendComponent[];
 }
 
 export type MetaSendComponent =
@@ -59,7 +69,8 @@ export type MetaSendComponent =
       sub_type: 'url' | 'quick_reply' | 'copy_code';
       index: string;
       parameters: MetaSendParameter[];
-    };
+    }
+  | { type: 'carousel'; cards: MetaCarouselCardPayload[] };
 
 type MetaSendParameter =
   | { type: 'text'; text: string }
@@ -212,6 +223,51 @@ function buildButtonComponent(
 }
 
 /**
+ * Build the CAROUSEL component for templates that carry cards. Meta
+ * requires, per card: the media header parameter (image/video link or
+ * id) and a payload parameter for each QUICK_REPLY button. Card bodies
+ * are treated as static (no per-card body variables in v1).
+ */
+function buildCarouselComponent(
+  cards: CarouselCard[],
+  params: SendTimeParams,
+): MetaSendComponent {
+  const payloadCards: MetaCarouselCardPayload[] = cards.map((card, i) => {
+    const url =
+      params.carouselCardMedia?.[i]?.trim() || card.media_url?.trim();
+    if (!url) {
+      throw new Error(
+        `Carousel card ${i + 1} requires a media URL — set it in the Personalize step.`,
+      );
+    }
+    const components: MetaSendComponent[] = [
+      {
+        type: 'header',
+        parameters: [
+          card.header_format === 'VIDEO'
+            ? { type: 'video', video: { link: url } }
+            : { type: 'image', image: { link: url } },
+        ],
+      },
+    ];
+    (card.buttons ?? []).forEach((btn, bi) => {
+      if (btn.type === 'QUICK_REPLY') {
+        components.push({
+          type: 'button',
+          sub_type: 'quick_reply',
+          index: String(bi),
+          parameters: [{ type: 'payload', payload: btn.text || `card-${i}` }],
+        });
+      }
+      // Static URL / PHONE buttons need no send-time params; URL
+      // buttons with {{1}} suffixes are out of scope for carousel v1.
+    });
+    return { card_index: i, components };
+  });
+  return { type: 'carousel', cards: payloadCards };
+}
+
+/**
  * Build the full `components` array for the send-message payload.
  * Returns an empty array when the template is fully static (no
  * variables, no media header), which is a valid Meta request.
@@ -231,6 +287,9 @@ export function buildSendComponents(
       const component = buildButtonComponent(btn, i, override);
       if (component) out.push(component);
     });
+  }
+  if (template.carousel_cards?.length) {
+    out.push(buildCarouselComponent(template.carousel_cards, params));
   }
   return out;
 }
