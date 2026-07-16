@@ -103,6 +103,12 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        errors?: Array<{
+          code?: number
+          title?: string
+          message?: string
+          error_data?: { details?: string }
+        }>
       }>
     }
     field: string
@@ -377,7 +383,28 @@ async function handleStatusUpdate(status: {
   status: string
   timestamp: string
   recipient_id: string
+  errors?: Array<{
+    code?: number
+    title?: string
+    message?: string
+    error_data?: { details?: string }
+  }>
 }) {
+  // Meta attaches the failure reason on `failed` statuses — surface it
+  // so the broadcast detail page can show WHY a delivery failed
+  // (frequency cap, media fetch error, etc.) instead of a bare dash.
+  const errText =
+    status.status === 'failed' && status.errors?.length
+      ? status.errors
+          .map((e) =>
+            [e.code ? `(#${e.code})` : null, e.title ?? e.message, e.error_data?.details]
+              .filter(Boolean)
+              .join(' '),
+          )
+          .join(' | ')
+          .slice(0, 900)
+      : null
+
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
@@ -420,6 +447,7 @@ async function handleStatusUpdate(status: {
     if (status.status === 'sent' && !('sent_at' in update)) update.sent_at = tsIso
     if (status.status === 'delivered') update.delivered_at = tsIso
     if (status.status === 'read') update.read_at = tsIso
+    if (errText) update.error_message = errText
 
     const { error: recUpdateErr } = await supabaseAdmin()
       .from('broadcast_recipients')
