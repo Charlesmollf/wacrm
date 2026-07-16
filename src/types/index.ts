@@ -315,6 +315,17 @@ export interface TemplateSampleValues {
   header?: string[];
 }
 
+/** One card of a Meta CAROUSEL template (synced from Meta). */
+export interface CarouselCard {
+  /** Media header format of the card. */
+  header_format: 'IMAGE' | 'VIDEO';
+  /** Static card body text (may contain {{N}} — not yet parameterised). */
+  body_text?: string;
+  buttons?: TemplateButton[];
+  /** Public media URL used at send time (seeded from Meta's example). */
+  media_url?: string;
+}
+
 export interface MessageTemplate {
   id: string;
   user_id: string;
@@ -328,6 +339,7 @@ export interface MessageTemplate {
   body_text: string;
   footer_text?: string;
   buttons?: TemplateButton[];
+  carousel_cards?: CarouselCard[] | null;
   sample_values?: TemplateSampleValues;
   status?: MessageTemplateStatus;
   meta_template_id?: string;
