@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
-import type { TemplateButton, TemplateSampleValues } from '@/types'
+import type { CarouselCard, TemplateButton, TemplateSampleValues } from '@/types'
 
 /**
  * Sync message templates from Meta → local message_templates table.
@@ -33,11 +33,45 @@ interface MetaTemplateComponent {
   text?: string
   format?: string
   buttons?: MetaButton[]
+  cards?: { components?: MetaTemplateComponent[] }[]
   example?: {
     header_text?: string[]
     header_handle?: string[]
     body_text?: string[][]
   }
+}
+
+/**
+ * Parse a Meta CAROUSEL component into our CarouselCard[] shape.
+ * Meta's read API returns each card's example.header_handle as a
+ * fetchable lookaside URL — we seed `media_url` from it so carousel
+ * sends work with zero extra configuration. `existing` preserves any
+ * media_url the user overrode locally.
+ */
+function parseCarouselCards(
+  carousel: MetaTemplateComponent | undefined,
+  existing: CarouselCard[] | null,
+): CarouselCard[] | null {
+  if (!carousel?.cards?.length) return null
+  return carousel.cards.map((card, i) => {
+    const comps = card.components ?? []
+    const header = comps.find((c) => c.type?.toUpperCase() === 'HEADER')
+    const body = comps.find((c) => c.type?.toUpperCase() === 'BODY')
+    const buttons = comps.find((c) => c.type?.toUpperCase() === 'BUTTONS')
+    const handle = header?.example?.header_handle?.[0]
+    const seeded =
+      typeof handle === 'string' && /^https?:\/\//.test(handle)
+        ? handle
+        : undefined
+    const prev = existing?.[i]?.media_url
+    return {
+      header_format:
+        header?.format?.toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE',
+      body_text: body?.text ?? undefined,
+      buttons: parseButtons(buttons?.buttons),
+      media_url: prev || seeded,
+    } as CarouselCard
+  })
 }
 
 interface MetaTemplate {
@@ -219,6 +253,9 @@ export async function POST() {
       const header = (t.components ?? []).find((c) => c.type === 'HEADER')
       const footer = (t.components ?? []).find((c) => c.type === 'FOOTER')
       const buttons = (t.components ?? []).find((c) => c.type === 'BUTTONS')
+      const carousel = (t.components ?? []).find(
+        (c) => c.type?.toUpperCase() === 'CAROUSEL',
+      )
 
       const parsedButtons = parseButtons(buttons?.buttons)
       const sampleValues = extractSampleValues(body, header)
@@ -247,6 +284,7 @@ export async function POST() {
         body_text: body?.text ?? '',
         footer_text: footer?.text ?? null,
         buttons: parsedButtons.length ? parsedButtons : null,
+        carousel_cards: null as CarouselCard[] | null,
         sample_values: sampleValues,
         status: normalizeStatus(t.status),
         meta_template_id: t.id,
@@ -256,11 +294,16 @@ export async function POST() {
 
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
-        .select('id')
+        .select('id, carousel_cards')
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
         .maybeSingle()
+
+      row.carousel_cards = parseCarouselCards(
+        carousel,
+        (existing?.carousel_cards as CarouselCard[] | null) ?? null,
+      )
 
       if (lookupErr) {
         errors.push({
