@@ -149,6 +149,31 @@ async function fetchCustomValueIndex(
   return index;
 }
 
+/**
+ * Fetch contacts by id in chunks. A single `.in('id', [...])` with
+ * hundreds of UUIDs overflows PostgREST's URL limit and the whole
+ * request 400s ("Bad Request") — which is why large tag audiences
+ * (800+ contacts) failed to send. 200 ids per request keeps the URL
+ * comfortably under the cap.
+ */
+async function fetchContactsByIds(
+  supabase: ReturnType<typeof createClient>,
+  ids: string[],
+): Promise<Contact[]> {
+  const out: Contact[] = [];
+  const PAGE = 200;
+  for (let i = 0; i < ids.length; i += PAGE) {
+    const slice = ids.slice(i, i + PAGE);
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .in('id', slice);
+    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
+    out.push(...((data ?? []) as Contact[]));
+  }
+  return out;
+}
+
 export function useBroadcastSending(): UseBroadcastSendingReturn {
   const { accountId } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -180,12 +205,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
         const uniqueContactIds = [
           ...new Set(contactTags.map((ct) => ct.contact_id)),
         ];
-        const { data, error } = await supabase
-          .from('contacts')
-          .select('*')
-          .in('id', uniqueContactIds);
-        if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-        contacts = data ?? [];
+        contacts = await fetchContactsByIds(supabase, uniqueContactIds);
       }
     } else if (audience.type === 'custom_field' && audience.customField) {
       contacts = await resolveCustomFieldAudience(supabase, audience.customField);
@@ -313,13 +333,7 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
     const contactIds = [...new Set((matches ?? []).map((m) => m.contact_id))];
     if (contactIds.length === 0) return [];
-
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', contactIds);
-    if (error) throw new Error(`Failed to fetch contacts: ${error.message}`);
-    return data ?? [];
+    return fetchContactsByIds(supabase, contactIds);
   }
 
   async function createAndSendBroadcast(payload: BroadcastPayload): Promise<string> {
