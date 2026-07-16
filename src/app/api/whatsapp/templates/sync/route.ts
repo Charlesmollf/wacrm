@@ -269,6 +269,8 @@ export async function POST() {
           ? headerFormat.toLowerCase()
           : null
 
+      const headerHandle = header?.example?.header_handle?.[0] ?? null
+
       const row = {
         // Account tenancy + user audit, same split as the submit
         // route. account_id is NOT NULL on message_templates
@@ -280,7 +282,14 @@ export async function POST() {
         language: t.language,
         header_type: headerType,
         header_content: header?.text ?? null,
-        header_handle: header?.example?.header_handle?.[0] ?? null,
+        header_handle: headerHandle,
+        // Seed a usable send-time media URL from Meta's example handle
+        // when it's a fetchable URL (lookaside). Preserved below if the
+        // user already set their own URL.
+        header_media_url:
+          headerHandle && /^https?:\/\//.test(headerHandle)
+            ? headerHandle
+            : null,
         body_text: body?.text ?? '',
         footer_text: footer?.text ?? null,
         buttons: parsedButtons.length ? parsedButtons : null,
@@ -294,12 +303,15 @@ export async function POST() {
 
       const { data: existing, error: lookupErr } = await supabase
         .from('message_templates')
-        .select('id, carousel_cards')
+        .select('id, carousel_cards, header_media_url')
         .eq('account_id', accountId)
         .eq('name', t.name)
         .eq('language', t.language)
         .maybeSingle()
 
+      if ((existing as { header_media_url?: string | null } | null)?.header_media_url) {
+        row.header_media_url = (existing as { header_media_url: string }).header_media_url
+      }
       row.carousel_cards = parseCarouselCards(
         carousel,
         (existing?.carousel_cards as CarouselCard[] | null) ?? null,
