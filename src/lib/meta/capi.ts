@@ -101,16 +101,27 @@ export async function sendPurchaseEvent(
       signal: AbortSignal.timeout(10000),
     })
     const json = (await res.json().catch(() => null)) as {
-      error?: { message?: string; fbtrace_id?: string }
+      error?: {
+        message?: string
+        error_user_title?: string
+        error_user_msg?: string
+        error_subcode?: number
+        fbtrace_id?: string
+      }
     } | null
 
     if (!res.ok || json?.error) {
+      const e = json?.error ?? {}
+      const detail =
+        [e.message, e.error_user_title, e.error_user_msg]
+          .filter(Boolean)
+          .join(' | ') || `HTTP ${res.status}`
       return {
         ok: false,
         attributed,
         status: res.status,
-        error: json?.error?.message ?? `HTTP ${res.status}`,
-        fbtrace_id: json?.error?.fbtrace_id,
+        error: detail,
+        fbtrace_id: e.fbtrace_id,
       }
     }
     return { ok: true, attributed, status: res.status }
