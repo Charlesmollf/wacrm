@@ -45,6 +45,17 @@ interface WhatsAppMessage {
   document?: { id: string; mime_type: string; filename?: string; caption?: string }
   audio?: { id: string; mime_type: string }
   sticker?: { id: string; mime_type: string }
+  // Present on the FIRST inbound message when the customer arrived by
+  // tapping a Click-to-WhatsApp ad. `ctwa_clid` is the click id we send
+  // back to Meta on purchase for ad attribution.
+  referral?: {
+    source_type?: string
+    source_id?: string
+    source_url?: string
+    ctwa_clid?: string
+    headline?: string
+    body?: string
+  }
   location?: { latitude: number; longitude: number; name?: string; address?: string }
   reaction?: { message_id: string; emoji: string }
   /**
@@ -652,6 +663,27 @@ async function processMessage(
       conversation_id: conversation.id,
       contact_id: contactRecord.id,
     })
+  }
+
+  // Click-to-WhatsApp attribution: if this inbound carries an ad referral,
+  // stamp the click id on the conversation (first-touch — only when not
+  // already set) so a later confirmed payment can report a Purchase back
+  // to Meta. Best-effort; never blocks message handling.
+  if (message.referral?.ctwa_clid) {
+    try {
+      await supabaseAdmin()
+        .from('conversations')
+        .update({
+          ctwa_clid: message.referral.ctwa_clid,
+          ctwa_source_id: message.referral.source_id ?? null,
+          ctwa_source_type: message.referral.source_type ?? null,
+          ctwa_captured_at: new Date().toISOString(),
+        })
+        .eq('id', conversation.id)
+        .is('ctwa_clid', null)
+    } catch (err) {
+      console.error('[ctwa] referral capture failed:', err)
+    }
   }
 
   // Reactions short-circuit here — they aren't messages. We never insert
