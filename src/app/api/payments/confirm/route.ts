@@ -124,6 +124,13 @@ async function reportPurchaseToMeta(
       phone = contact?.phone_normalized ?? contact?.phone ?? null
     }
 
+    // No ad click id → this sale didn't originate from a Click-to-WhatsApp
+    // ad, so there's no campaign to attribute it to. Skip cleanly (Meta
+    // rejects business_messaging events without a ctwa_clid anyway).
+    if (!ctwaClid) {
+      return { sent: false, reason: 'no_ctwa_clid' }
+    }
+
     const result = await sendPurchaseEvent({
       datasetId,
       accessToken,
