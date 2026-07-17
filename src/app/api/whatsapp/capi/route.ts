@@ -17,12 +17,14 @@ export async function GET() {
     const { accountId } = await requireRole('admin')
     const { data } = await supabaseAdmin()
       .from('whatsapp_config')
-      .select('capi_dataset_id, capi_access_token')
+      .select('capi_dataset_id, capi_access_token, resend_api_key, alert_email')
       .eq('account_id', accountId)
       .maybeSingle()
     return NextResponse.json({
       dataset_id: data?.capi_dataset_id ?? null,
       has_token: !!data?.capi_access_token,
+      alert_email: data?.alert_email ?? null,
+      has_resend: !!data?.resend_api_key,
     })
   } catch (err) {
     return toErrorResponse(err)
@@ -74,6 +76,28 @@ export async function POST(request: Request) {
       } else {
         // Empty string clears the dedicated token (falls back to WA token).
         patch.capi_access_token = null
+      }
+    }
+
+    if ('alert_email' in body) {
+      const em = typeof body.alert_email === 'string' ? body.alert_email.trim() : ''
+      patch.alert_email = em || null
+    }
+
+    if ('resend_api_key' in body) {
+      const raw =
+        typeof body.resend_api_key === 'string' ? body.resend_api_key.trim() : ''
+      if (raw) {
+        try {
+          patch.resend_api_key = encrypt(raw)
+        } catch {
+          return NextResponse.json(
+            { error: 'No se pudo encriptar el token (revisa ENCRYPTION_KEY).' },
+            { status: 500 },
+          )
+        }
+      } else {
+        patch.resend_api_key = null
       }
     }
 
