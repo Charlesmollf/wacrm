@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -23,7 +23,6 @@ const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
 
 export default function InboxPage() {
   const t = useTranslations("Inbox.page");
-  const router = useRouter();
   const searchParams = useSearchParams();
   /**
    * `?c=<id>` deep-link support. Used when landing here from the
@@ -470,11 +469,16 @@ export default function InboxPage() {
       // clobbers the messages MessageThread just fetched.
       autoSelectedForDeepLinkRef.current = conv.id;
       // Reflect the selection in the URL so a refresh lands the user
-      // back in the same thread, and so copy-paste links work. Use
-      // replace() to avoid polluting browser history with every click.
-      router.replace(`/inbox?c=${conv.id}`, { scroll: false });
+      // back in the same thread, and so copy-paste links work. Shallow
+      // history.replaceState (no RSC round-trip, no history pollution):
+      // router.replace() proved to silently no-op here in production,
+      // leaving the URL pinned to a stale ?c= — every realtime list
+      // refresh then snapped the user back to that stale thread via the
+      // deep-link auto-selector. Next syncs useSearchParams with
+      // replaceState, so `deepLinkConvId` stays consistent too.
+      window.history.replaceState(null, "", `/inbox?c=${conv.id}`);
     },
-    [activeConversation?.id, router]
+    [activeConversation?.id]
   );
 
   // Mobile "back" — deselect the conversation so the list pane comes
@@ -487,8 +491,8 @@ export default function InboxPage() {
     // Clearing the ref lets the deep-link auto-selector fire again if
     // the user later visits /inbox?c=<same-id> — desirable UX.
     autoSelectedForDeepLinkRef.current = null;
-    router.replace("/inbox", { scroll: false });
-  }, [router]);
+    window.history.replaceState(null, "", "/inbox");
+  }, []);
 
   const handleDeleteConversation = useCallback(
     async (conversationId: string) => {
@@ -508,10 +512,10 @@ export default function InboxPage() {
         setActiveContact(null);
         setMessages([]);
         autoSelectedForDeepLinkRef.current = null;
-        router.replace("/inbox", { scroll: false });
+        window.history.replaceState(null, "", "/inbox");
       }
     },
-    [activeConversation, router],
+    [activeConversation],
   );
 
 
