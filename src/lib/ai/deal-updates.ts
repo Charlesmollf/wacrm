@@ -19,6 +19,7 @@
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { notifyPaymentToConfirm } from '@/lib/notify/payment-alert'
 
 /** Instruction block injected into the auto-reply system prompt so the
  *  model knows to emit the marker. Spanish, matching the Kaffeejager
@@ -234,6 +235,19 @@ export async function applyDealUpdates(
 
     if (Object.keys(patch).length === 0) return
     await db.from('deals').update(patch).eq('id', (deal as { id: string }).id)
+
+    // Fire the owner alert the moment this deal newly enters the
+    // "Confirmar pagos" queue (transition INTO 'Por confirmar'). Only on
+    // the transition, so we never double-alert. Best-effort, non-blocking.
+    const prevStatus = (deal as { payment_status?: string | null }).payment_status || ''
+    if (patch.payment_status === 'Por confirmar' && prevStatus !== 'Por confirmar') {
+      void notifyPaymentToConfirm(db, {
+        accountId,
+        contactId,
+        value: patch.value ?? updates.total ?? null,
+        paymentMethod: effectiveMethod || null,
+      })
+    }
   } catch (err) {
     console.error('[ai deal-updates] applyDealUpdates failed:', err)
   }
