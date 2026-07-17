@@ -83,7 +83,7 @@ export function CapiConfig() {
     } finally {
       setSaving(false);
     }
-  }, [datasetId, token]);
+  }, [datasetId, token, alertEmail, resendKey]);
 
   return (
     <Card>
