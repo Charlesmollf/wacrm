@@ -20,6 +20,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { notifyPaymentToConfirm } from '@/lib/notify/payment-alert'
+import { syncPaymentTag } from '@/lib/crm/payment-tags'
 
 /** Instruction block injected into the auto-reply system prompt so the
  *  model knows to emit the marker. Spanish, matching the Kaffeejager
@@ -246,6 +247,15 @@ export async function applyDealUpdates(
         contactId,
         value: patch.value ?? updates.total ?? null,
         paymentMethod: effectiveMethod || null,
+      })
+    }
+
+    // Keep the filterable "Pago: …" tag in sync with the new status.
+    if (patch.payment_status) {
+      void syncPaymentTag(db, {
+        accountId,
+        contactId,
+        paymentStatus: patch.payment_status,
       })
     }
   } catch (err) {
