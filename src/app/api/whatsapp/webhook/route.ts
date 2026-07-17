@@ -9,6 +9,7 @@ import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchInboundImageToAiReply } from '@/lib/ai/image-reply'
+import { applyDealUpdates } from '@/lib/ai/deal-updates'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -885,6 +886,42 @@ async function processMessage(
   // the account has enabled it. Awaited inside `after()` (same reason as
   // the webhook dispatch below); `dispatchInboundToAiReply` owns its
   // eligibility gates + try/catch and never throws.
+  // Payment-proof safety net: vouchers often arrive as a DOCUMENT (e.g. a
+  // Pagalo voucher) or as a payment link the AI's image/text paths never
+  // flag — so a real payment silently stays "Pendiente" and never reaches
+  // "Confirmar pagos". Detect those here and route the contact's open deal
+  // into the review queue (which also fires the owner email alert). The
+  // queue is human-verified, so an occasional false positive is cheap.
+  const proofRe = /pagalo|comprobante|voucher|boleta|dep[o\u00f3]sito|recibo|transferenci|\.pdf/i
+  const looksLikePaymentProof =
+    message.type === 'document' || (!!inboundText && proofRe.test(inboundText))
+  if (looksLikePaymentProof) {
+    void (async () => {
+      try {
+        const db = supabaseAdmin()
+        const { data: deal } = await db
+          .from('deals')
+          .select('id, payment_status')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactRecord.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const st = ((deal?.payment_status as string | null) || '').toLowerCase()
+        if (deal && !st.includes('pagad') && !st.includes('confirmar')) {
+          await applyDealUpdates(
+            db,
+            { accountId, contactId: contactRecord.id },
+            { payment_status: 'Por confirmar' },
+          )
+        }
+      } catch (err) {
+        console.error('[comprobante] flag failed:', err)
+      }
+    })()
+  }
+
+  // AI auto-reply.
   if (!flowConsumed && !interactiveReplyId) {
     // Stickers are just webp images — route them through the same
     // vision path so a sticker-only inbound still gets a reply instead
