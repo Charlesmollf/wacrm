@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, type ReactNode } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
 import { useAuth } from '@/hooks/use-auth';
@@ -25,7 +25,6 @@ import {
 } from '@/components/settings/settings-sections';
 
 export default function SettingsPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { defaultCurrency } = useAuth();
   const { mode } = useTheme();
@@ -35,12 +34,25 @@ export default function SettingsPage() {
   // section — deep-linkable, and it keeps the existing links in the
   // app sidebar/header working. Legacy tab values (tags, custom-fields)
   // resolve onto their new home; unknown/empty → the Overview landing.
-  const section = resolveSection(searchParams.get('tab'));
+  // Local state drives the active section so a rail click updates the UI
+  // instantly. We mirror it into the URL with history.replaceState —
+  // router.replace() proved to silently no-op in this deployment, which
+  // left the rail frozen (the section is derived from ?tab=, and the URL
+  // never changed). An effect keeps state in sync when the URL changes
+  // from outside (sidebar links, back/forward).
+  const [section, setSection] = useState<SettingsSection>(() =>
+    resolveSection(searchParams.get('tab')),
+  );
+
+  useEffect(() => {
+    setSection(resolveSection(searchParams.get('tab')));
+  }, [searchParams]);
 
   const go = (next: SettingsSection) => {
+    setSection(next);
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', next);
-    router.replace(`/settings?${params.toString()}`, { scroll: false });
+    window.history.replaceState(null, '', `/settings?${params.toString()}`);
   };
 
   // Cheap, fetch-free rail hints. The Overview landing carries the
