@@ -28,6 +28,7 @@ export function CapiConfig() {
   const [hasResend, setHasResend] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -84,6 +85,23 @@ export function CapiConfig() {
       setSaving(false);
     }
   }, [datasetId, token, alertEmail, resendKey]);
+
+  const sendTest = useCallback(async () => {
+    setTesting(true);
+    try {
+      const res = await fetch('/api/whatsapp/capi/test', { method: 'POST' });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.ok) {
+        toast.success(`Correo de prueba enviado a ${json.to}. Revisa tu bandeja.`);
+      } else {
+        toast.error(json?.error ?? 'No se pudo enviar el correo de prueba.');
+      }
+    } catch {
+      toast.error('Error de red al enviar la prueba.');
+    } finally {
+      setTesting(false);
+    }
+  }, []);
 
   return (
     <Card>
@@ -189,10 +207,20 @@ export function CapiConfig() {
           </div>
         </div>
 
-        <Button onClick={save} disabled={loading || saving}>
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          Guardar
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={save} disabled={loading || saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Guardar
+          </Button>
+          <Button
+            variant="outline"
+            onClick={sendTest}
+            disabled={loading || saving || testing}
+          >
+            {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Enviar correo de prueba
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
