@@ -188,6 +188,42 @@ export function PipelineBoard({
     onReload();
   }
 
+  async function bulkUntag(tagId: string) {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || !tagId) return;
+    const contactIds = [
+      ...new Set(
+        ids
+          .map((id) => deals.find((d) => d.id === id)?.contact_id)
+          .filter((c): c is string => !!c),
+      ),
+    ];
+    if (contactIds.length === 0) {
+      toast.error("Los deals seleccionados no tienen contacto.");
+      return;
+    }
+    setBulkBusy(true);
+    const supabase = createClient();
+    let failed = false;
+    await runInChunks(contactIds, 100, async (chunk) => {
+      const { error } = await supabase
+        .from("contact_tags")
+        .delete()
+        .eq("tag_id", tagId)
+        .in("contact_id", chunk);
+      if (error) failed = true;
+    });
+    setBulkBusy(false);
+    if (failed) {
+      toast.error("No se pudo quitar la etiqueta a algunos contactos.");
+    } else {
+      const name = allTags.find((t) => t.id === tagId)?.name ?? "";
+      toast.success(`Etiqueta "${name}" quitada a ${contactIds.length} contacto(s).`);
+    }
+    clearSelection();
+    onReload();
+  }
+
   const selectedCount = selectedIds.size;
 
   return (
@@ -279,6 +315,24 @@ export function PipelineBoard({
               className="h-8 rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
             >
               <option value="">Etiquetar…</option>
+              {allTags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              defaultValue=""
+              disabled={bulkBusy || allTags.length === 0}
+              onChange={(e) => {
+                const v = e.target.value;
+                e.target.value = "";
+                if (v) bulkUntag(v);
+              }}
+              className="h-8 rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
+            >
+              <option value="">Quitar etiqueta…</option>
               {allTags.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
