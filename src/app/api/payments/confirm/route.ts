@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { sendPurchaseEvent } from '@/lib/meta/capi'
+import { syncPaymentTag } from '@/lib/crm/payment-tags'
 
 /**
  * POST /api/payments/confirm  (agent+)
@@ -48,6 +49,15 @@ export async function POST(request: Request) {
         { error: 'No se pudo confirmar el pago: ' + updErr.message },
         { status: 500 },
       )
+    }
+
+    // Move the contact's payment tag to "Pagado" so filters stay accurate.
+    if (deal.contact_id) {
+      void syncPaymentTag(supabaseAdmin(), {
+        accountId,
+        contactId: deal.contact_id,
+        paymentStatus: 'Pagado',
+      })
     }
 
     // Fire the Meta Purchase signal (best-effort, service-role reads).
