@@ -120,14 +120,26 @@ export default function PaymentsPage() {
 
   const markPaid = useCallback(async (deal: Row) => {
     setConfirmingId(deal.id);
-    const supabase = createClient();
-    const { error: updErr } = await supabase
-      .from("deals")
-      .update({ payment_status: "Pagado" })
-      .eq("id", deal.id);
+    // Route through the server so it can (a) mark the deal paid and (b) fire
+    // the Click-to-WhatsApp Purchase signal to Meta with the secret token —
+    // which can't happen from the browser.
+    let ok = false;
+    let errMsg = "";
+    try {
+      const res = await fetch("/api/payments/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deal_id: deal.id }),
+      });
+      const json = await res.json().catch(() => null);
+      ok = res.ok && json?.ok === true;
+      if (!ok) errMsg = json?.error ?? `Error ${res.status}`;
+    } catch (e) {
+      errMsg = e instanceof Error ? e.message : "Error de red";
+    }
     setConfirmingId(null);
-    if (updErr) {
-      toast.error("No se pudo confirmar el pago: " + updErr.message);
+    if (!ok) {
+      toast.error("No se pudo confirmar el pago: " + errMsg);
       return;
     }
     const summary = buildOrderSummary(deal);
