@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import { drainScheduledBroadcasts } from '@/lib/whatsapp/scheduled-broadcast'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -34,7 +35,12 @@ export async function GET(request: Request) {
     .limit(50)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!due || due.length === 0) return NextResponse.json({ processed: 0 })
+  // Also send any due scheduled broadcasts (separate from automations).
+  let broadcastsSent = 0
+  try { broadcastsSent = await drainScheduledBroadcasts(admin) } catch (e) { console.error('[cron] scheduled broadcasts failed:', e) }
+
+  if (!due || due.length === 0)
+    return NextResponse.json({ processed: 0, broadcastsSent })
 
   let processed = 0
   for (const row of due) {
@@ -64,5 +70,5 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed })
+  return NextResponse.json({ processed, broadcastsSent })
 }
