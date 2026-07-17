@@ -27,10 +27,10 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   'EXTRACCION DE DATOS (INVISIBLE): Cuando en la conversacion el cliente indique o tu confirmes cualquiera de estos datos, agrega al FINAL del mensaje UNA sola marca con este formato EXACTO: ' +
   '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
-  'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido; ' +
+  'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido | Mixto (usa Mixto SOLO cuando en un mismo pedido unos productos van en grano y otros molidos; en ese caso escribe la molienda de cada producto entre parentesis dentro de combo, ej. combo=Maracaturra (grano), Maragogipe (molido)); ' +
   'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; ' +
-  'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. ' +
-  'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. ' +
+  'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. Si el cliente solo MODIFICA o REAFIRMA el MISMO pedido (corrige la molienda, aclara un producto, repite lo ya pedido) NO es venta nueva: reenvia el combo corregido pero NO incluyas total; el sistema actualiza el pedido en vez de duplicarlo. ' +
+  'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. En pedidos CONTRA ENTREGA no hay comprobante: cuando el cliente confirma la compra (envias total y forma_pago=Contra entrega) el sistema lo manda solo a la cola de confirmacion para que el equipo lo prepare. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
 
 const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
@@ -148,7 +148,7 @@ export async function applyDealUpdates(
     // the current conversation is about.
     const { data: deal } = await db
       .from('deals')
-      .select('id, combo_history, sold_at, payment_status')
+      .select('id, combo_history, sold_at, payment_status, payment_method')
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false })
@@ -189,13 +189,47 @@ export async function applyDealUpdates(
       const date = new Date().toISOString().slice(0, 10)
       const line = `[${date}] ${updates.combo}`
       const prev = (deal as { combo_history?: string | null }).combo_history
-      // Avoid duplicating the exact same combo on the same day.
-      patch.combo_history =
-        prev && prev.trim()
-          ? prev.includes(line)
-            ? prev
-            : `${prev}\n${line}`
-          : line
+      if (!prev || !prev.trim()) {
+        patch.combo_history = line
+      } else if (prev.includes(line)) {
+        patch.combo_history = prev
+      } else if (updates.total) {
+        // A confirmed total means a genuinely NEW order → keep the full
+        // history, append a new dated line.
+        patch.combo_history = `${prev}\n${line}`
+      } else {
+        // No new total → modification/reaffirmation of the SAME order
+        // (e.g. the customer corrected the grind). Supersede today's
+        // existing line instead of stacking a near-duplicate; if there's
+        // no line for today, append.
+        const lines = prev.split('\n')
+        const todayIdx = lines.findIndex((l) => l.startsWith(`[${date}]`))
+        if (todayIdx >= 0) {
+          lines[todayIdx] = line
+          patch.combo_history = lines.join('\n')
+        } else {
+          patch.combo_history = `${prev}\n${line}`
+        }
+      }
+    }
+
+    // Contra-entrega orders never produce a payment receipt, so they'd
+    // never reach the "Por confirmar" review queue the way card/transfer
+    // orders do (which land there when the customer sends a receipt). When
+    // the customer confirms a cash-on-delivery order (total + forma_pago=
+    // Contra entrega), route it into the same queue so the owner gets the
+    // alert and reads it as an order to prepare. Only when the model
+    // didn't already set an explicit status this turn.
+    const effectiveMethod =
+      updates.payment_method ||
+      (deal as { payment_method?: string | null }).payment_method ||
+      ''
+    if (
+      updates.total &&
+      !updates.payment_status &&
+      /contra\s*entrega/i.test(effectiveMethod)
+    ) {
+      patch.payment_status = 'Por confirmar'
     }
 
     if (Object.keys(patch).length === 0) return
