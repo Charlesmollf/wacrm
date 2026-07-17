@@ -1,10 +1,10 @@
 name: CI
 
+# Auto-run on push/PR disabled to stop failure-notification email spam
+# (the app deploys via Hostinger, not through this gate). Run it manually
+# from the Actions tab (workflow_dispatch) when you want the full checks.
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 # Cancel older CI runs for the same branch when a new commit arrives —
 # saves minutes when someone pushes a stack of fixes to one PR.
