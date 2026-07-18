@@ -52,6 +52,7 @@ function buildOrderSummary(deal: Deal): string {
   const pago = deal.payment_method || "—";
   const direccion = deal.address?.trim() || "—";
   const nit = deal.nit?.trim() || "—";
+  const nota = ((deal as { notes?: string | null }).notes || "").trim();
 
   return [
     "🔥 NUEVO PEDIDO CONFIRMADO",
@@ -62,6 +63,7 @@ function buildOrderSummary(deal: Deal): string {
     `💳 Pago: ${pago}`,
     `📍 Dirección: ${direccion}`,
     `🧾 NIT: ${nit}`,
+    ...(nota ? [`📝 Nota: ${nota}`] : []),
   ].join("\n");
 }
 
