@@ -27,10 +27,10 @@ import { syncPaymentTag } from '@/lib/crm/payment-tags'
  *  agent's voice. Kept here so the prompt and the parser stay in sync. */
 export const DEAL_EXTRACTION_INSTRUCTIONS =
   'EXTRACCION DE DATOS (INVISIBLE): Cuando en la conversacion el cliente indique o tu confirmes cualquiera de estos datos, agrega al FINAL del mensaje UNA sola marca con este formato EXACTO: ' +
-  '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...]]. ' +
+  '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...; notas=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido | Mixto (usa Mixto SOLO cuando en un mismo pedido unos productos van en grano y otros molidos; en ese caso escribe la molienda de cada producto entre parentesis dentro de combo, ej. combo=Maracaturra (grano), Maragogipe (molido)); ' +
-  'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; ' +
+  'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; notas = nota o instruccion especial del pedido, sobre todo REGALOS (formato: Regalo para [destinatario], de parte de [comprador]); ' +
   'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. Si el cliente solo MODIFICA o REAFIRMA el MISMO pedido (corrige la molienda, aclara un producto, repite lo ya pedido) NO es venta nueva: reenvia el combo corregido pero NO incluyas total; el sistema actualiza el pedido en vez de duplicarlo. ' +
   'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. En pedidos CONTRA ENTREGA no hay comprobante: cuando el cliente confirma la compra (envias total y forma_pago=Contra entrega) el sistema lo manda solo a la cola de confirmacion para que el equipo lo prepare. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
@@ -47,6 +47,8 @@ export interface DealUpdates {
   combo?: string
   /** Total sale amount (Q); written to deal.value on confirmation. */
   total?: string
+  /** Free-form order note (e.g. gift recipient) -> deal.notes. */
+  notes?: string
 }
 
 export interface ExtractedDealData {
@@ -111,6 +113,9 @@ export function extractDealMarkers(text: string): ExtractedDealData {
         case 'nit':
           updates.nit = val
           break
+        case 'notas':
+          updates.notes = val
+          break
         default:
           break
       }
@@ -142,6 +147,7 @@ export async function applyDealUpdates(
       updates.grind ||
       updates.address ||
       updates.nit ||
+      updates.notes ||
       updates.combo ||
       updates.total
     if (!hasField) return
@@ -164,6 +170,7 @@ export async function applyDealUpdates(
     if (updates.grind) patch.grind = updates.grind
     if (updates.address) patch.address = updates.address
     if (updates.nit) patch.nit = updates.nit
+    if (updates.notes) patch.notes = updates.notes
 
     if (updates.total) {
       const amount = parseFloat(String(updates.total).replace(/[^0-9.]/g, ''))

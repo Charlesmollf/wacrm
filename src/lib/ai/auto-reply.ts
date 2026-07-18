@@ -49,6 +49,21 @@ export async function dispatchInboundToAiReply(
   try {
     const db = supabaseAdmin()
 
+    // Debounce rapid-fire bursts: wait a few seconds, and if the customer
+    // sent another message meanwhile, bail — that later message's handler
+    // replies with the full context. Stops the duplicate / partial replies
+    // we got when someone types several lines in a row.
+    const debounceStart = new Date().toISOString()
+    await new Promise((r) => setTimeout(r, 5000))
+    const { data: newerMsgs } = await db
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'customer')
+      .gt('created_at', debounceStart)
+      .limit(1)
+    if (newerMsgs && newerMsgs.length > 0) return
+
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
 
