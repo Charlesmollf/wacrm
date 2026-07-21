@@ -241,6 +241,25 @@ export async function applyDealUpdates(
       patch.payment_status = 'Por confirmar'
     }
 
+    // Never drag an already-PAID order back into the confirmation queue
+    // unless this same message carries a NEW confirmed total (a genuinely
+    // new purchase). A late "ya pagué", a re-sent receipt, or a delivery
+    // question on a paid order must not restart the payment cycle — that
+    // was the Rocío / Dr. Jovito duplicate-confirmation bug.
+    const paidAlready = (
+      (deal as { payment_status?: string | null }).payment_status || ''
+    )
+      .toLowerCase()
+      .includes('pagad')
+    if (
+      paidAlready &&
+      !updates.total &&
+      (patch.payment_status === 'Por confirmar' ||
+        patch.payment_status === 'Pendiente')
+    ) {
+      delete patch.payment_status
+    }
+
     if (Object.keys(patch).length === 0) return
     await db.from('deals').update(patch).eq('id', (deal as { id: string }).id)
 

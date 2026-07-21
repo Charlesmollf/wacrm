@@ -99,6 +99,43 @@ export async function dispatchInboundToAiReply(
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
 
+    // Ground the model in this contact's CURRENT order (the CRM is the
+    // source of truth) so a question days later ("¿cuándo llega?"), a
+    // late payment, or a re-sent receipt is related to the EXISTING
+    // order instead of being misread as a new purchase — the root cause
+    // of the duplicated-order incidents (payment arriving 2-3 days
+    // after the order, delivery questions re-confirming the pedido).
+    let orderContext = ''
+    try {
+      const { data: lastDeal } = await db
+        .from('deals')
+        .select('value, payment_status, payment_method, combo_history, notes, created_at')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (lastDeal && (lastDeal.value || lastDeal.payment_status)) {
+        const lastCombo =
+          (lastDeal.combo_history || '').trim().split('\n').pop() || '—'
+        orderContext =
+          `\n\nPEDIDO ACTUAL DE ESTE CLIENTE SEGUN EL CRM (fuente de verdad, puede ser de dias atras): ` +
+          `producto: ${lastCombo}; total: Q${lastDeal.value ?? 0}; ` +
+          `estado de pago: ${lastDeal.payment_status ?? 'sin registrar'}; ` +
+          `forma de pago: ${lastDeal.payment_method ?? '—'}; ` +
+          `registrado el: ${String(lastDeal.created_at).slice(0, 10)}` +
+          (lastDeal.notes ? `; nota: ${lastDeal.notes}` : '') +
+          `. REGLA CRITICA: si el cliente pregunta por la entrega, el estado, o manda un pago/comprobante ` +
+          `que corresponde a ESTE pedido (aunque hayan pasado dias), relacionalo con el pedido EXISTENTE: ` +
+          `NO lo confirmes de nuevo, NO emitas total, y si el estado ya es "Por confirmar" o "Pagado" NO ` +
+          `pongas estado_pago otra vez. Trata la conversacion como VENTA NUEVA solo si el cliente pide ` +
+          `explicitamente comprar OTRA vez. Si tienes duda, pregunta con comunicacion asertiva, por ejemplo: ` +
+          `"¿Me confirma si se refiere a su pedido anterior o desea hacer un pedido nuevo?"`
+      }
+    } catch {
+      // best-effort — a failed lookup must never block the reply
+    }
+
     // Account-wide throttle on the shared BYO key. The per-conversation
     // cap bounds one thread; this bounds a burst across many threads (a
     // marketing blast landing 200 replies at once) so we never run the
@@ -123,11 +160,12 @@ export async function dispatchInboundToAiReply(
       latestUserMessage(messages),
     )
 
-    const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
-      mode: 'auto_reply',
-      knowledge,
-    })
+    const systemPrompt =
+      buildSystemPrompt({
+        userPrompt: config.systemPrompt,
+        mode: 'auto_reply',
+        knowledge,
+      }) + orderContext
 
     // One retry on transient provider failures (overloaded / network
     // blip): a single hiccup must not leave the customer unanswered.

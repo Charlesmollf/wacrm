@@ -28,7 +28,12 @@ export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 export const MAX_OUTPUT_TOKENS = 1024
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-const DEFAULT_CONTEXT_MESSAGE_LIMIT = 20
+// 80 messages ≈ a week of a typical sales thread. A wide window is what
+// lets the model recognise that a customer paying (or asking about
+// delivery) days later is talking about the SAME order — the
+// duplicate-order bugs all came from the model only seeing the last few
+// lines of the conversation.
+const DEFAULT_CONTEXT_MESSAGE_LIMIT = 80
 
 /** Per-call provider timeout. Override with `AI_REQUEST_TIMEOUT_MS`. */
 export function aiRequestTimeoutMs(): number {
