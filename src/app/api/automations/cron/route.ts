@@ -3,12 +3,21 @@ import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { drainScheduledBroadcasts } from '@/lib/whatsapp/scheduled-broadcast'
+import { isBusinessHoursGT, runPipelineTimers } from '@/lib/crm/pipeline-timers'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
  * on a schedule (Vercel Cron / external pinger) — requires a shared
  * secret via the `x-cron-secret` header to match
  * `AUTOMATION_CRON_SECRET`.
+ *
+ * Business-hours guard: automated CUSTOMER-FACING sends (scheduled
+ * broadcasts + pending automation steps, e.g. the 24h follow-up
+ * template) only go out Mon-Fri 07:00-21:00 Guatemala time. Outside
+ * that window they stay queued and the next in-window run delivers
+ * them — nobody gets a template at 3am. Silent pipeline timers
+ * (Enviado→Ganados, Cliente nuevo→viejo) run on every invocation:
+ * they move cards and tags, never message anyone.
  *
  * The claim step (status = 'running') serves as a simple lock so
  * overlapping invocations don't double-process rows. Best-effort
@@ -26,6 +35,34 @@ export async function GET(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  // Silent pipeline clockwork — no customer messages, runs 24/7.
+  let timers: unknown = null
+  try {
+    timers = await runPipelineTimers(admin)
+  } catch (e) {
+    console.error('[cron] pipeline timers failed:', e)
+  }
+
+  const inBusinessHours = isBusinessHoursGT()
+  if (!inBusinessHours) {
+    // Everything below sends messages to customers — defer it all.
+    return NextResponse.json({
+      processed: 0,
+      broadcastsSent: 0,
+      deferred: true,
+      timers,
+    })
+  }
+
+  // Send any due scheduled broadcasts (separate from automations).
+  let broadcastsSent = 0
+  try {
+    broadcastsSent = await drainScheduledBroadcasts(admin)
+  } catch (e) {
+    console.error('[cron] scheduled broadcasts failed:', e)
+  }
+
   const { data: due, error } = await admin
     .from('automation_pending_executions')
     .select('*')
@@ -35,12 +72,9 @@ export async function GET(request: Request) {
     .limit(50)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  // Also send any due scheduled broadcasts (separate from automations).
-  let broadcastsSent = 0
-  try { broadcastsSent = await drainScheduledBroadcasts(admin) } catch (e) { console.error('[cron] scheduled broadcasts failed:', e) }
 
   if (!due || due.length === 0)
-    return NextResponse.json({ processed: 0, broadcastsSent })
+    return NextResponse.json({ processed: 0, broadcastsSent, timers })
 
   let processed = 0
   for (const row of due) {
@@ -70,5 +104,5 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed, broadcastsSent })
+  return NextResponse.json({ processed, broadcastsSent, timers })
 }
