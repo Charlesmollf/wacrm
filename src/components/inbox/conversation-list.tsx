@@ -48,7 +48,7 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  
+
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
@@ -181,7 +181,16 @@ export function ConversationList({
       });
     }
 
-    return result;
+    // Always most-recent-activity first: whoever wrote last sits at the
+    // top, oldest threads sink to the bottom. The initial fetch is
+    // ordered by last_message_at, but realtime events mutate rows in
+    // place (and hydrated conversations are appended), so without this
+    // re-sort the list drifts out of order as messages arrive.
+    return [...result].sort(
+      (a, b) =>
+        new Date(b.last_message_at ?? 0).getTime() -
+        new Date(a.last_message_at ?? 0).getTime()
+    );
   }, [conversations, filter, search, selectedTagIds, selectedCompany]);
 
   const toggleTag = useCallback((id: string) => {
