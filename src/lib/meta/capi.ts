@@ -1,18 +1,26 @@
 import { createHash } from 'crypto'
 
 /**
- * Meta Conversions API — server-side Purchase events for Click-to-WhatsApp.
+ * Meta Conversions API — server-side Purchase events.
  *
- * When a customer taps a "Click to WhatsApp" ad, Meta attaches a `referral`
- * object (with a `ctwa_clid`) to their first inbound message. We stash that
- * click id on the conversation. When the owner later confirms the payment,
- * we fire a server-side `Purchase` event back to Meta's dataset so the
- * campaign learns which conversations turned into real, paid sales and can
- * optimize toward them (action_source = business_messaging).
+ * Two attribution paths:
+ *
+ * 1) Click-to-WhatsApp (best): when a customer taps a CTWA ad, Meta
+ *    attaches a `referral` (with `ctwa_clid`) to their first inbound
+ *    message; we stash it on the conversation. Confirming the payment
+ *    fires a Purchase with action_source = business_messaging + that
+ *    click id — deterministic attribution.
+ *
+ * 2) Advanced matching (fallback): sales with no ctwa_clid (older
+ *    conversations, repeat buyers, Shopify orders) are still sent, as
+ *    action_source = website with hashed phone/email/name. Meta matches
+ *    the person against ad viewers/clickers inside the attribution
+ *    window — so purchases from people who saw the ad but entered
+ *    through an old chat or the store still credit the campaign.
  *
  * Best-effort by contract: every error is swallowed and returned as a
- * result object — a failed signal must never block the payment being marked
- * as paid.
+ * result object — a failed signal must never block the payment being
+ * marked as paid.
  */
 
 const META_API_VERSION = 'v21.0'
@@ -28,17 +36,30 @@ export interface SendPurchaseEventArgs {
   currency: string
   /** Customer phone in E.164-ish digits (no +); hashed before send. */
   phone?: string | null
+  /** Customer email; hashed before send (fallback matching). */
+  email?: string | null
+  /** Customer first/last name; hashed before send (fallback matching). */
+  firstName?: string | null
+  lastName?: string | null
   /** Click id from the Click-to-WhatsApp referral, when the lead came from an ad. */
   ctwaClid?: string | null
+  /** Facebook click cookie value (fb.1.<ts>.<fbclid>) when known — e.g.
+   *  rebuilt from a Shopify order's fbclid. Strong web attribution. */
+  fbc?: string | null
   /** Stable id so re-confirming the same deal dedupes instead of double-counting. */
   eventId: string
+  /** Unix seconds of the actual sale moment; defaults to now. Must be
+   *  within the last 7 days per CAPI rules. */
+  eventTime?: number | null
+  /** Page URL for website-source events (e.g. the store's order page). */
+  eventSourceUrl?: string | null
   /** WhatsApp Business Account id — helps Meta bind the event to the channel. */
   wabaId?: string | null
 }
 
 export interface SendPurchaseEventResult {
   ok: boolean
-  /** Whether the event carried a ctwa_clid (i.e. is ad-attributable). */
+  /** Whether the event carried a ctwa_clid (i.e. is deterministically ad-attributable). */
   attributed: boolean
   status?: number
   error?: string
@@ -59,8 +80,14 @@ export async function sendPurchaseEvent(
     value,
     currency,
     phone,
+    email,
+    firstName,
+    lastName,
     ctwaClid,
+    fbc,
     eventId,
+    eventTime,
+    eventSourceUrl,
     wabaId,
   } = args
 
@@ -73,23 +100,43 @@ export async function sendPurchaseEvent(
       const digits = phone.replace(/[^0-9]/g, '')
       if (digits) userData.ph = [hash(digits)]
     }
-    if (wabaId) userData.whatsapp_business_account_id = wabaId
+    if (email && email.includes('@')) userData.em = [hash(email)]
+    if (firstName) userData.fn = [hash(firstName)]
+    if (lastName) userData.ln = [hash(lastName)]
+    if (fbc) userData.fbc = fbc
+    if (attributed && wabaId) userData.whatsapp_business_account_id = wabaId
+
+    // Without any identifier Meta rejects the event outright — bail early
+    // with a readable reason instead of a cryptic API error.
+    if (Object.keys(userData).length === 0) {
+      return { ok: false, attributed, error: 'no user identifiers to match on' }
+    }
+
+    const event: Record<string, unknown> = {
+      event_name: 'Purchase',
+      event_time: eventTime && eventTime > 0 ? eventTime : Math.floor(Date.now() / 1000),
+      event_id: eventId,
+      user_data: userData,
+      custom_data: {
+        currency: currency || 'GTQ',
+        value: Number(value) || 0,
+      },
+    }
+
+    if (attributed) {
+      // Deterministic CTWA attribution.
+      event.action_source = 'business_messaging'
+      event.messaging_channel = 'whatsapp'
+    } else {
+      // Advanced-matching fallback — same source the Shopify pixel uses,
+      // so the campaign's "Compras" column counts it when Meta matches
+      // the buyer to an ad view/click.
+      event.action_source = 'website'
+      if (eventSourceUrl) event.event_source_url = eventSourceUrl
+    }
 
     const payload = {
-      data: [
-        {
-          action_source: 'business_messaging',
-          messaging_channel: 'whatsapp',
-          event_name: 'Purchase',
-          event_time: Math.floor(Date.now() / 1000),
-          event_id: eventId,
-          user_data: userData,
-          custom_data: {
-            currency: currency || 'GTQ',
-            value: Number(value) || 0,
-          },
-        },
-      ],
+      data: [event],
       access_token: accessToken,
     }
 
