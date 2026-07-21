@@ -11,10 +11,14 @@ import { syncPaymentTag } from '@/lib/crm/payment-tags'
  * Body: { deal_id }
  *
  * Marks a deal's payment as "Pagado" and — this is the whole point of doing
- * it server-side — fires a Click-to-WhatsApp Purchase event back to Meta's
- * Conversions API so the ad campaigns learn which chats became real, paid
- * sales and optimize toward them. The Meta call is best-effort: it never
- * blocks or fails the payment confirmation.
+ * it server-side — fires a Purchase event back to Meta's Conversions API so
+ * the ad campaigns learn which chats became real, paid sales and optimize
+ * toward them. Sales with a CTWA click id go out as business_messaging
+ * (deterministic attribution); everything else goes out as an advanced-
+ * matching website event (hashed phone/name/email) so purchases from
+ * people who saw the ad but bought through an old chat still credit the
+ * campaign. The Meta call is best-effort: it never blocks or fails the
+ * payment confirmation.
  */
 export async function POST(request: Request) {
   try {
@@ -125,28 +129,34 @@ async function reportPurchaseToMeta(
     }
 
     let phone: string | null = null
+    let email: string | null = null
+    let firstName: string | null = null
+    let lastName: string | null = null
     if (deal.contact_id) {
       const { data: contact } = await db
         .from('contacts')
-        .select('phone_normalized, phone')
+        .select('phone_normalized, phone, email, name')
         .eq('id', deal.contact_id)
         .maybeSingle()
       phone = contact?.phone_normalized ?? contact?.phone ?? null
+      email = (contact as { email?: string | null } | null)?.email ?? null
+      const nameParts = (contact?.name ?? '').trim().split(/\s+/)
+      if (nameParts.length > 0 && nameParts[0]) firstName = nameParts[0]
+      if (nameParts.length > 1) lastName = nameParts[nameParts.length - 1]
     }
 
-    // No ad click id → this sale didn't originate from a Click-to-WhatsApp
-    // ad, so there's no campaign to attribute it to. Skip cleanly (Meta
-    // rejects business_messaging events without a ctwa_clid anyway).
-    if (!ctwaClid) {
-      return { sent: false, reason: 'no_ctwa_clid' }
-    }
-
+    // With a ctwa_clid this is a deterministic CTWA conversion; without
+    // one we still send it — advanced matching (hashed phone/name/email)
+    // lets Meta credit the campaign when this buyer saw or clicked an ad.
     const result = await sendPurchaseEvent({
       datasetId,
       accessToken,
       value: Number(deal.value) || 0,
       currency: deal.currency || 'GTQ',
       phone,
+      email,
+      firstName,
+      lastName,
       ctwaClid,
       eventId: `deal_${deal.id}`,
       wabaId: config.waba_id ?? null,
