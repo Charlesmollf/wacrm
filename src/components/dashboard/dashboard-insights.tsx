@@ -258,19 +258,24 @@ export function ActivityChart() {
               strokeWidth={2}
               dot={false}
             />
-            <Line
-              type="monotone"
-              dataKey="ventas"
-              name="Ventas"
-              stroke={COLORS.ventas}
-              strokeWidth={2}
-              dot={false}
-            />
+            {/* Clientes nuevos va ANTES (debajo) y punteada: casi siempre
+                coincide con Ventas (la mayoría de ventas son primeras
+                compras), y dos líneas sólidas idénticas se tapan — la
+                verde "desaparecía" debajo de la morada. */}
             <Line
               type="monotone"
               dataKey="clientesNuevos"
               name="Clientes nuevos"
               stroke={COLORS.clientesNuevos}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              dot={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="ventas"
+              name="Ventas"
+              stroke={COLORS.ventas}
               strokeWidth={2}
               dot={false}
             />
