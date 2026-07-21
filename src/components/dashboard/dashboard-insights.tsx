@@ -80,15 +80,10 @@ function useAxisColor(): string {
   return color;
 }
 
-// Days with more new contacts than this are treated as bulk imports and
-// hidden from the activity chart so a one-time spike doesn't flatten the
-// scale for the small day-to-day numbers. The data itself is untouched.
-const CONTACT_SPIKE_CAP = 50;
-
 const COLORS = {
   conversaciones: "#3b82f6", // azul
   ventas: "#22c55e", // verde
-  contactos: "#7c3aed", // violeta
+  clientesNuevos: "#7c3aed", // violeta
 };
 
 function Card({
@@ -127,14 +122,20 @@ function Loading() {
 }
 
 // ---------------------------------------------------------------------------
-// Actividad diaria (30 días): conversaciones + ventas + contactos nuevos.
+// Actividad diaria (30 días): conversaciones + ventas + clientes nuevos.
 // Ventas se cuentan por fecha de la venta (sold_at), no por cuándo se creó
 // el deal — así la compra aparece el día real en que el cliente compró.
+//
+// "Clientes nuevos" (línea morada) = contactos cuya PRIMERA venta cayó ese
+// día. Se calcula con la fecha fija de la primera venta (min sold_at por
+// contacto), NUNCA con la etiqueta "Cliente nuevo" — la etiqueta rota a
+// "Cliente viejo" a los 30 días y borraría el histórico; la fecha de la
+// primera venta es inmutable, así que la gráfica siempre cuadra.
 // ---------------------------------------------------------------------------
 export function ActivityChart() {
   const axis = useAxisColor();
   const [data, setData] = useState<
-    { day: string; conversaciones: number; ventas: number; contactos: number | null }[]
+    { day: string; conversaciones: number; ventas: number; clientesNuevos: number }[]
     | null
   >(null);
 
@@ -147,7 +148,7 @@ export function ActivityChart() {
       since.setHours(0, 0, 0, 0);
       const sinceIso = since.toISOString();
 
-      const [{ data: msgs }, { data: sales }, { data: contacts }] =
+      const [{ data: msgs }, { data: sales }, { data: allSold }] =
         await Promise.all([
           db
             .from("messages")
@@ -161,10 +162,13 @@ export function ActivityChart() {
             .not("sold_at", "is", null)
             .gte("sold_at", sinceIso)
             .limit(20000),
+          // Full history of sold deals: needed to know each contact's
+          // FIRST sale (a buyer with an older sale is not "nuevo").
           db
-            .from("contacts")
-            .select("created_at")
-            .gte("created_at", sinceIso)
+            .from("deals")
+            .select("contact_id, sold_at")
+            .not("sold_at", "is", null)
+            .not("contact_id", "is", null)
             .limit(20000),
         ]);
       if (cancelled) return;
@@ -183,23 +187,30 @@ export function ActivityChart() {
         const k = ymd(new Date(s.sold_at));
         salesByDay.set(k, (salesByDay.get(k) ?? 0) + 1);
       }
-      const contactsByDay = new Map<string, number>();
-      for (const c of (contacts ?? []) as { created_at: string }[]) {
-        const k = ymd(new Date(c.created_at));
-        contactsByDay.set(k, (contactsByDay.get(k) ?? 0) + 1);
+
+      // First sale per contact → count of brand-new customers per day.
+      const firstSale = new Map<string, number>();
+      for (const d of (allSold ?? []) as {
+        contact_id: string;
+        sold_at: string;
+      }[]) {
+        const t = new Date(d.sold_at).getTime();
+        const prev = firstSale.get(d.contact_id);
+        if (prev === undefined || t < prev) firstSale.set(d.contact_id, t);
+      }
+      const newByDay = new Map<string, number>();
+      for (const t of firstSale.values()) {
+        const k = ymd(new Date(t));
+        newByDay.set(k, (newByDay.get(k) ?? 0) + 1);
       }
 
       setData(
-        lastNDays(DAYS).map((k) => {
-          const c = contactsByDay.get(k) ?? 0;
-          return {
-            day: k,
-            conversaciones: convByDay.get(k)?.size ?? 0,
-            ventas: salesByDay.get(k) ?? 0,
-            // Hide bulk-import spikes so the scale stays readable.
-            contactos: c > CONTACT_SPIKE_CAP ? null : c,
-          };
-        }),
+        lastNDays(DAYS).map((k) => ({
+          day: k,
+          conversaciones: convByDay.get(k)?.size ?? 0,
+          ventas: salesByDay.get(k) ?? 0,
+          clientesNuevos: newByDay.get(k) ?? 0,
+        })),
       );
     })();
     return () => {
@@ -209,7 +220,7 @@ export function ActivityChart() {
 
   return (
     <Card
-      title="Conversaciones, ventas y contactos"
+      title="Conversaciones, ventas y clientes nuevos"
       subtitle="Actividad por día (últimos 30 días)"
       icon={Activity}
     >
@@ -257,9 +268,9 @@ export function ActivityChart() {
             />
             <Line
               type="monotone"
-              dataKey="contactos"
-              name="Contactos nuevos"
-              stroke={COLORS.contactos}
+              dataKey="clientesNuevos"
+              name="Clientes nuevos"
+              stroke={COLORS.clientesNuevos}
               strokeWidth={2}
               dot={false}
             />
