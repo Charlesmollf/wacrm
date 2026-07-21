@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     // RLS scopes this to the caller's account — a missing row is "not yours".
     const { data: deal, error: dealErr } = await supabase
       .from('deals')
-      .select('id, value, currency, contact_id, conversation_id')
+      .select('id, value, currency, contact_id, conversation_id, pipeline_id')
       .eq('id', dealId)
       .maybeSingle()
     if (dealErr) {
@@ -53,6 +53,34 @@ export async function POST(request: Request) {
         { error: 'No se pudo confirmar el pago: ' + updErr.message },
         { status: 500 },
       )
+    }
+
+    // The confirm button is the manual gate that releases the order to
+    // the roastery — reflect that on the board: the card moves itself
+    // from "Pedidos Confirmados" to "Enviado". From there the cron
+    // promotes it to "Ganados" after 5 business days.
+    try {
+      const admin = supabaseAdmin()
+      const pipelineId = (deal as { pipeline_id?: string | null }).pipeline_id
+      if (pipelineId) {
+        const { data: enviado } = await admin
+          .from('pipeline_stages')
+          .select('id')
+          .eq('pipeline_id', pipelineId)
+          .eq('name', 'Enviado')
+          .maybeSingle()
+        if (enviado) {
+          await admin
+            .from('deals')
+            .update({
+              stage_id: enviado.id,
+              stage_entered_at: new Date().toISOString(),
+            })
+            .eq('id', dealId)
+        }
+      }
+    } catch (moveErr) {
+      console.error('[payments/confirm] move to Enviado failed:', moveErr)
     }
 
     // Move the contact's payment tag to "Pagado" so filters stay accurate.
