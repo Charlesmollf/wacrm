@@ -55,25 +55,53 @@ interface StageRow {
 
 interface TimerResult {
   movedToGanados: number
+  movedToPerdidos: number
   taggedNuevo: number
   rotatedViejo: number
+}
+
+/** Café-agnostic tags that must NEVER be swept as cold coffee leads —
+ *  the insurance/personal book stays isolated per the owner's rule. */
+const PROTECTED_TAG_NAMES = [
+  'otro-negocio-seguros',
+  'seguros',
+  'fianzas',
+  'personal',
+  'persona-clave',
+]
+
+/** Calendar days since an ISO timestamp. */
+function daysSince(iso: string, now: Date): number {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return 0
+  return (now.getTime() - t) / 86_400_000
 }
 
 export async function runPipelineTimers(
   db: SupabaseClient,
 ): Promise<TimerResult> {
-  const result: TimerResult = { movedToGanados: 0, taggedNuevo: 0, rotatedViejo: 0 }
+  const result: TimerResult = {
+    movedToGanados: 0,
+    movedToPerdidos: 0,
+    taggedNuevo: 0,
+    rotatedViejo: 0,
+  }
   const now = new Date()
 
   // ---- stage + tag lookups -------------------------------------------
   const { data: stages } = await db
     .from('pipeline_stages')
     .select('id, pipeline_id, name')
-    .in('name', ['Enviado', 'Ganados'])
+    .in('name', ['Nuevos Leads', 'Enviado', 'Ganados', 'Perdidos'])
   const enviadoIds = ((stages ?? []) as StageRow[]).filter((s) => s.name === 'Enviado')
+  const nuevosLeadIds = ((stages ?? []) as StageRow[]).filter(
+    (s) => s.name === 'Nuevos Leads',
+  )
   const ganadosByPipeline = new Map<string, string>()
+  const perdidosByPipeline = new Map<string, string>()
   for (const s of (stages ?? []) as StageRow[]) {
     if (s.name === 'Ganados') ganadosByPipeline.set(s.pipeline_id, s.id)
+    if (s.name === 'Perdidos') perdidosByPipeline.set(s.pipeline_id, s.id)
   }
 
   const { data: tagRows } = await db
@@ -113,6 +141,56 @@ export async function runPipelineTimers(
     }
   } catch (err) {
     console.error('[pipeline-timers] Enviado→Ganados failed:', err)
+  }
+
+  // ---- 1b) Nuevos Leads → Perdidos after 5 days with no interest ------
+  // A lead that has sat in "Nuevos Leads" for 5+ days never advanced to
+  // Negociación — treat it as cold and archive it in Perdidos. The
+  // insurance/personal book is explicitly excluded: those contacts are
+  // isolated and must never be swept as cold coffee leads.
+  try {
+    if (nuevosLeadIds.length > 0 && perdidosByPipeline.size > 0) {
+      // Contact ids that carry a protected (insurance/personal) tag.
+      const { data: protTags } = await db
+        .from('tags')
+        .select('id')
+        .in('name', PROTECTED_TAG_NAMES)
+      const protectedTagIds = (protTags ?? []).map((t) => t.id as string)
+      const protectedContacts = new Set<string>()
+      if (protectedTagIds.length > 0) {
+        const { data: protCT } = await db
+          .from('contact_tags')
+          .select('contact_id')
+          .in('tag_id', protectedTagIds)
+          .limit(5000)
+        for (const ct of protCT ?? [])
+          if (ct.contact_id) protectedContacts.add(ct.contact_id as string)
+      }
+
+      const { data: coldLeads } = await db
+        .from('deals')
+        .select('id, contact_id, pipeline_id, created_at, stage_entered_at')
+        .in('stage_id', nuevosLeadIds.map((s) => s.id))
+        .limit(1000)
+      for (const d of coldLeads ?? []) {
+        const anchor = (d.stage_entered_at as string) || (d.created_at as string)
+        if (daysSince(anchor, now) < 5) continue
+        if (d.contact_id && protectedContacts.has(d.contact_id as string)) continue
+        const target = perdidosByPipeline.get(d.pipeline_id as string)
+        if (!target) continue
+        const { error } = await db
+          .from('deals')
+          .update({
+            stage_id: target,
+            stage_entered_at: now.toISOString(),
+            status: 'lost',
+          })
+          .eq('id', d.id as string)
+        if (!error) result.movedToPerdidos++
+      }
+    }
+  } catch (err) {
+    console.error('[pipeline-timers] Nuevos Leads→Perdidos failed:', err)
   }
 
   // ---- 2) First real win → "Cliente nuevo" ---------------------------
