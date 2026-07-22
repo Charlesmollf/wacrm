@@ -156,7 +156,7 @@ export async function applyDealUpdates(
     // the current conversation is about.
     const { data: deal } = await db
       .from('deals')
-      .select('id, combo_history, sold_at, payment_status, payment_method')
+      .select('id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id')
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false })
@@ -258,6 +258,59 @@ export async function applyDealUpdates(
         patch.payment_status === 'Pendiente')
     ) {
       delete patch.payment_status
+    }
+
+    // --- Auto-mover la tarjeta en el pipeline según la señal del bot ---
+    // El bot maneja el tablero solo; el dueño solo confirma el pago.
+    //   • El cliente muestra intención de compra (el bot menciona un
+    //     producto → `combo`) y está en "Nuevos Leads" o "Ganados"
+    //     (cliente viejo re-interesado) → pasa a "Negociación" para
+    //     tenerlo visible y empujar la venta.
+    //   • Llega comprobante de pago / se confirma contra-entrega
+    //     (payment_status → "Por confirmar") → pasa a "Pedidos
+    //     Confirmados" (y ya estaba entrando a la cola Confirmar pagos).
+    // Nunca se mueve hacia atrás una tarjeta ya Enviada/en Pedidos.
+    try {
+      const pipelineId = (deal as { pipeline_id?: string | null }).pipeline_id
+      const curStage = (deal as { stage_id?: string | null }).stage_id
+      if (pipelineId) {
+        const { data: stages } = await db
+          .from('pipeline_stages')
+          .select('id, name')
+          .eq('pipeline_id', pipelineId)
+        const byName: Record<string, string> = {}
+        for (const s of stages ?? []) byName[s.name as string] = s.id as string
+        const nuevos = byName['Nuevos Leads']
+        const negociacion = byName['Negociación']
+        const pedidos = byName['Pedidos Confirmados']
+        const enviado = byName['Enviado']
+        const ganados = byName['Ganados']
+
+        let targetStage: string | undefined
+        if (
+          patch.payment_status === 'Por confirmar' &&
+          pedidos &&
+          curStage !== pedidos &&
+          curStage !== enviado
+        ) {
+          // Comprobante / contra-entrega confirmada → Pedidos Confirmados.
+          targetStage = pedidos
+        } else if (
+          updates.combo &&
+          negociacion &&
+          (curStage === nuevos || curStage === ganados)
+        ) {
+          // Interés de compra → Negociación (nuevo lead o cliente viejo
+          // que vuelve a interesarse).
+          targetStage = negociacion
+        }
+        if (targetStage && targetStage !== curStage) {
+          patch.stage_id = targetStage
+          patch.stage_entered_at = new Date().toISOString()
+        }
+      }
+    } catch (err) {
+      console.error('[ai deal-updates] auto stage move failed:', err)
     }
 
     if (Object.keys(patch).length === 0) return
