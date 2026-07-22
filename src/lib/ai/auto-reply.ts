@@ -10,6 +10,7 @@ import { latestUserMessage } from './query'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates } from './deal-updates'
+import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 interface DispatchArgs {
@@ -215,6 +216,17 @@ export async function dispatchInboundToAiReply(
         update.assigned_agent_id = config.handoffAgentId
       }
       await db.from('conversations').update(update).eq('id', conversationId)
+
+      // Email the owner the moment the AI hands the thread to a human —
+      // the exact instant the conversation becomes "assigned" — so they
+      // know to jump in even before the customer writes again. The
+      // webhook's per-burst alert covers every SUBSEQUENT message; this
+      // covers the handoff itself. Fire-and-forget, best-effort.
+      void notifyHumanNeeded(db, {
+        accountId,
+        conversationId,
+        contactId,
+      })
       return
     }
 
