@@ -10,6 +10,7 @@ import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
 import { dispatchInboundImageToAiReply } from '@/lib/ai/image-reply'
 import { applyDealUpdates } from '@/lib/ai/deal-updates'
+import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -771,6 +772,20 @@ async function processMessage(
     return
   }
 
+  // Snapshot the conversation's pre-update attention state + timestamps
+  // for the human-alert decision below. Read BEFORE the update so
+  // last_inbound_at still holds the PREVIOUS inbound time (this is what
+  // makes the once-per-burst debounce work — see the alert block).
+  const convWasPaused =
+    conversation.ai_autoreply_disabled === true ||
+    !!conversation.assigned_agent_id
+  const prevLastInboundAt = conversation.last_inbound_at
+    ? new Date(conversation.last_inbound_at).getTime()
+    : 0
+  const prevLastOutboundAt = conversation.last_outbound_at
+    ? new Date(conversation.last_outbound_at).getTime()
+    : 0
+
   // Update conversation
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
@@ -785,6 +800,37 @@ async function processMessage(
 
   if (convError) {
     console.error('Error updating conversation:', convError)
+  }
+
+  // ============================================================
+  // Human-attention email alert.
+  //
+  // When the AI is NOT going to reply on this thread — it was manually
+  // paused ("AI assistant is paused here") or the conversation is
+  // assigned to a human — the customer would otherwise wait unseen. Email
+  // the owner so they can jump in.
+  //
+  // Debounced to ONE email per unanswered burst, with no extra state
+  // column: we only alert when this is the FIRST customer message since
+  // the last outbound reply. The tell is `last_outbound_at >=
+  // last_inbound_at` on the PRE-update snapshot — i.e. the last thing on
+  // the thread was our reply (or nothing), so a new inbound starts a
+  // fresh burst. If the customer already had an unanswered message
+  // (last_inbound_at > last_outbound_at) this is a continuation and we
+  // stay quiet. Result: 25 messages in a row → one email; once the owner
+  // replies (last_outbound_at moves past last_inbound_at) the next burst
+  // alerts again. Fire-and-forget; never blocks the webhook.
+  // ============================================================
+  if (convWasPaused) {
+    const isBurstStart = prevLastOutboundAt >= prevLastInboundAt
+    if (isBurstStart) {
+      void notifyHumanNeeded(supabaseAdmin(), {
+        accountId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        preview: contentText,
+      })
+    }
   }
 
   // If this contact was a recent broadcast recipient, flag the reply
@@ -892,7 +938,7 @@ async function processMessage(
   // "Confirmar pagos". Detect those here and route the contact's open deal
   // into the review queue (which also fires the owner email alert). The
   // queue is human-verified, so an occasional false positive is cheap.
-  const proofRe = /pagalo|comprobante|voucher|boleta|dep[o\u00f3]sito|recibo|transferenci|\.pdf/i
+  const proofRe = /pagalo|comprobante|voucher|boleta|dep[oó]sito|recibo|transferenci|\.pdf/i
   const looksLikePaymentProof =
     message.type === 'document' || (!!inboundText && proofRe.test(inboundText))
   if (looksLikePaymentProof) {
