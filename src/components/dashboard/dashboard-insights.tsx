@@ -85,10 +85,16 @@ function useAxisColor(): string {
   return color;
 }
 
+// Un día con más contactos nuevos que esto se trata como importación
+// masiva (p.ej. la carga de la cartera de Kommo) y se oculta de la línea
+// para no aplastar la escala de los números del día a día. El dato no se
+// altera; solo no se grafica ese pico puntual.
+const CONTACT_SPIKE_CAP = 60;
+
 const COLORS = {
   conversaciones: "#3b82f6", // azul
   ventas: "#22c55e", // verde
-  clientesNuevos: "#7c3aed", // violeta
+  nuevosContactos: "#7c3aed", // violeta
 };
 
 function Card({
@@ -127,20 +133,20 @@ function Loading() {
 }
 
 // ---------------------------------------------------------------------------
-// Actividad diaria (30 días): conversaciones + ventas + clientes nuevos.
-// Ventas se cuentan por fecha de la venta (sold_at), no por cuándo se creó
-// el deal — así la compra aparece el día real en que el cliente compró.
+// Actividad diaria (30 días): conversaciones + ventas + contactos nuevos.
 //
-// "Clientes nuevos" (línea morada) = contactos cuya PRIMERA venta cayó ese
-// día. Se calcula con la fecha fija de la primera venta (min sold_at por
-// contacto), NUNCA con la etiqueta "Cliente nuevo" — la etiqueta rota a
-// "Cliente viejo" a los 30 días y borraría el histórico; la fecha de la
-// primera venta es inmutable, así que la gráfica siempre cuadra.
+// - Ventas (verde): ventas Pagadas por su fecha real (sold_at ?? updated_at).
+// - Nuevos contactos (morado): personas que ESCRIBIERON POR PRIMERA VEZ ese
+//   día (contacts.created_at), hayan comprado o no. Sirve para leer la
+//   conversión del día: "entraron 5 nuevos vs se hicieron 2 ventas". Los
+//   días de importación masiva de la cartera se ocultan (spike cap) para
+//   no aplastar la escala.
+// - Conversaciones (azul): chats con mensajes de clientes ese día.
 // ---------------------------------------------------------------------------
 export function ActivityChart() {
   const axis = useAxisColor();
   const [data, setData] = useState<
-    { day: string; conversaciones: number; ventas: number; clientesNuevos: number }[]
+    { day: string; conversaciones: number; ventas: number; nuevosContactos: number | null }[]
     | null
   >(null);
 
@@ -153,25 +159,30 @@ export function ActivityChart() {
       since.setHours(0, 0, 0, 0);
       const sinceIso = since.toISOString();
 
-      const [{ data: msgs }, { data: paidDeals }] = await Promise.all([
-        db
-          .from("messages")
-          .select("conversation_id, created_at")
-          .eq("sender_type", "customer")
-          .gte("created_at", sinceIso)
-          .limit(20000),
-        // A "venta" = a deal marked Pagado. Its date is the sale date
-        // (sold_at) when the flow stamped one, else the confirmation
-        // date (updated_at). Counting only sold_at undercounted every
-        // sale confirmed manually without a sold_at — that's why the
-        // green line didn't match "Compras recientes" (which uses this
-        // same sold_at ?? updated_at fallback).
-        db
-          .from("deals")
-          .select("contact_id, sold_at, updated_at")
-          .eq("payment_status", "Pagado")
-          .limit(20000),
-      ]);
+      const [{ data: msgs }, { data: paidDeals }, { data: contacts }] =
+        await Promise.all([
+          db
+            .from("messages")
+            .select("conversation_id, created_at")
+            .eq("sender_type", "customer")
+            .gte("created_at", sinceIso)
+            .limit(20000),
+          // A "venta" = a deal marked Pagado. Its date is the sale date
+          // (sold_at) when the flow stamped one, else the confirmation
+          // date (updated_at) — same fallback as "Compras recientes".
+          db
+            .from("deals")
+            .select("sold_at, updated_at")
+            .eq("payment_status", "Pagado")
+            .limit(20000),
+          // New contacts = people who wrote for the first time. One row
+          // per contact, dated by created_at.
+          db
+            .from("contacts")
+            .select("created_at")
+            .gte("created_at", sinceIso)
+            .limit(20000),
+        ]);
       if (cancelled) return;
 
       const convByDay = new Map<string, Set<string>>();
@@ -184,13 +195,8 @@ export function ActivityChart() {
         if (m.conversation_id) convByDay.get(k)!.add(m.conversation_id);
       }
 
-      // Sale date + first-sale-per-contact, both from the SAME Pagado
-      // set so Ventas and Clientes nuevos stay consistent with each
-      // other and with the "Compras recientes" list.
       const salesByDay = new Map<string, number>();
-      const firstSale = new Map<string, number>();
       for (const d of (paidDeals ?? []) as {
-        contact_id: string | null;
         sold_at: string | null;
         updated_at: string | null;
       }[]) {
@@ -198,25 +204,26 @@ export function ActivityChart() {
         if (!iso) continue;
         const k = ymd(new Date(iso));
         salesByDay.set(k, (salesByDay.get(k) ?? 0) + 1);
-        if (d.contact_id) {
-          const t = new Date(iso).getTime();
-          const prev = firstSale.get(d.contact_id);
-          if (prev === undefined || t < prev) firstSale.set(d.contact_id, t);
-        }
       }
-      const newByDay = new Map<string, number>();
-      for (const t of firstSale.values()) {
-        const k = ymd(new Date(t));
-        newByDay.set(k, (newByDay.get(k) ?? 0) + 1);
+
+      const contactsByDay = new Map<string, number>();
+      for (const c of (contacts ?? []) as { created_at: string }[]) {
+        const k = ymd(new Date(c.created_at));
+        contactsByDay.set(k, (contactsByDay.get(k) ?? 0) + 1);
       }
 
       setData(
-        lastNDays(DAYS).map((k) => ({
-          day: k,
-          conversaciones: convByDay.get(k)?.size ?? 0,
-          ventas: salesByDay.get(k) ?? 0,
-          clientesNuevos: newByDay.get(k) ?? 0,
-        })),
+        lastNDays(DAYS).map((k) => {
+          const c = contactsByDay.get(k) ?? 0;
+          return {
+            day: k,
+            conversaciones: convByDay.get(k)?.size ?? 0,
+            ventas: salesByDay.get(k) ?? 0,
+            // Ocultar picos de importación masiva para que la escala
+            // diaria siga siendo legible.
+            nuevosContactos: c > CONTACT_SPIKE_CAP ? null : c,
+          };
+        }),
       );
     })();
     return () => {
@@ -226,8 +233,8 @@ export function ActivityChart() {
 
   return (
     <Card
-      title="Conversaciones, ventas y clientes nuevos"
-      subtitle="Actividad por día (últimos 30 días)"
+      title="Conversaciones, ventas y nuevos contactos"
+      subtitle="Actividad por día (últimos 30 días) · hora de Guatemala"
       icon={Activity}
     >
       {data === null ? (
@@ -264,18 +271,14 @@ export function ActivityChart() {
               strokeWidth={2}
               dot={false}
             />
-            {/* Clientes nuevos va ANTES (debajo) y punteada: casi siempre
-                coincide con Ventas (la mayoría de ventas son primeras
-                compras), y dos líneas sólidas idénticas se tapan — la
-                verde "desaparecía" debajo de la morada. */}
             <Line
               type="monotone"
-              dataKey="clientesNuevos"
-              name="Clientes nuevos"
-              stroke={COLORS.clientesNuevos}
+              dataKey="nuevosContactos"
+              name="Nuevos contactos"
+              stroke={COLORS.nuevosContactos}
               strokeWidth={2}
-              strokeDasharray="6 4"
               dot={false}
+              connectNulls
             />
             <Line
               type="monotone"
