@@ -56,6 +56,7 @@ interface StageRow {
 interface TimerResult {
   movedToGanados: number
   movedToPerdidos: number
+  keptCustomerInGanados: number
   taggedNuevo: number
   rotatedViejo: number
   compradoRecienteExpired: number
@@ -89,6 +90,7 @@ export async function runPipelineTimers(
   const result: TimerResult = {
     movedToGanados: 0,
     movedToPerdidos: 0,
+    keptCustomerInGanados: 0,
     taggedNuevo: 0,
     rotatedViejo: 0,
     compradoRecienteExpired: 0,
@@ -152,9 +154,13 @@ export async function runPipelineTimers(
 
   // ---- 1b) Nuevos Leads → Perdidos after 5 days with no interest ------
   // A lead that has sat in "Nuevos Leads" for 5+ days never advanced to
-  // Negociación — treat it as cold and archive it in Perdidos. The
-  // insurance/personal book is explicitly excluded: those contacts are
-  // isolated and must never be swept as cold coffee leads.
+  // Negociación — treat it as cold. Two carve-outs:
+  //   • The insurance/personal book is isolated and is never swept.
+  //   • An EXISTING customer (tag "Cliente viejo"/"Cliente nuevo") is
+  //     never sent to Perdidos — not everyone buys every time, and we
+  //     don't want to burn a repeat buyer. Their cold lead is returned
+  //     to Ganados instead so they stay in the customer base.
+  // Everyone else (a genuine new lead who went cold) goes to Perdidos.
   try {
     if (nuevosLeadIds.length > 0 && perdidosByPipeline.size > 0) {
       // Contact ids that carry a protected (insurance/personal) tag.
@@ -174,6 +180,23 @@ export async function runPipelineTimers(
           if (ct.contact_id) protectedContacts.add(ct.contact_id as string)
       }
 
+      // Contact ids that are already customers (bought at least once).
+      const { data: custTags } = await db
+        .from('tags')
+        .select('id')
+        .in('name', ['Cliente viejo', 'Cliente nuevo'])
+      const customerTagIds = (custTags ?? []).map((t) => t.id as string)
+      const customerContacts = new Set<string>()
+      if (customerTagIds.length > 0) {
+        const { data: custCT } = await db
+          .from('contact_tags')
+          .select('contact_id')
+          .in('tag_id', customerTagIds)
+          .limit(20000)
+        for (const ct of custCT ?? [])
+          if (ct.contact_id) customerContacts.add(ct.contact_id as string)
+      }
+
       const { data: coldLeads } = await db
         .from('deals')
         .select('id, contact_id, pipeline_id, created_at, stage_entered_at')
@@ -182,18 +205,26 @@ export async function runPipelineTimers(
       for (const d of coldLeads ?? []) {
         const anchor = (d.stage_entered_at as string) || (d.created_at as string)
         if (daysSince(anchor, now) < 5) continue
-        if (d.contact_id && protectedContacts.has(d.contact_id as string)) continue
-        const target = perdidosByPipeline.get(d.pipeline_id as string)
+        const cid = d.contact_id as string | null
+        if (cid && protectedContacts.has(cid)) continue // insurance — never touch
+
+        const isCustomer = cid ? customerContacts.has(cid) : false
+        const target = isCustomer
+          ? ganadosByPipeline.get(d.pipeline_id as string)
+          : perdidosByPipeline.get(d.pipeline_id as string)
         if (!target) continue
         const { error } = await db
           .from('deals')
           .update({
             stage_id: target,
             stage_entered_at: now.toISOString(),
-            status: 'lost',
+            status: isCustomer ? 'won' : 'lost',
           })
           .eq('id', d.id as string)
-        if (!error) result.movedToPerdidos++
+        if (!error) {
+          if (isCustomer) result.keptCustomerInGanados++
+          else result.movedToPerdidos++
+        }
       }
     }
   } catch (err) {
