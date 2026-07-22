@@ -101,10 +101,13 @@ export async function runPipelineTimers(
   const { data: stages } = await db
     .from('pipeline_stages')
     .select('id, pipeline_id, name')
-    .in('name', ['Nuevos Leads', 'Enviado', 'Ganados', 'Perdidos'])
+    .in('name', ['Nuevos Leads', 'Negociación', 'Enviado', 'Ganados', 'Perdidos'])
   const enviadoIds = ((stages ?? []) as StageRow[]).filter((s) => s.name === 'Enviado')
-  const nuevosLeadIds = ((stages ?? []) as StageRow[]).filter(
-    (s) => s.name === 'Nuevos Leads',
+  // Both "cold" stages a deal can rot in without closing: a lead that
+  // never showed interest (Nuevos Leads) and one that showed interest
+  // but didn't pay (Negociación). Same 5-day rule + same carve-outs.
+  const coldStageIds = ((stages ?? []) as StageRow[]).filter(
+    (s) => s.name === 'Nuevos Leads' || s.name === 'Negociación',
   )
   const ganadosByPipeline = new Map<string, string>()
   const perdidosByPipeline = new Map<string, string>()
@@ -152,17 +155,18 @@ export async function runPipelineTimers(
     console.error('[pipeline-timers] Enviado→Ganados failed:', err)
   }
 
-  // ---- 1b) Nuevos Leads → Perdidos after 5 days with no interest ------
-  // A lead that has sat in "Nuevos Leads" for 5+ days never advanced to
-  // Negociación — treat it as cold. Two carve-outs:
+  // ---- 1b) Cold in Nuevos Leads / Negociación → Perdidos or Ganados ---
+  // A deal that has sat in "Nuevos Leads" (never showed interest) or in
+  // "Negociación" (showed interest but didn't pay) for 5+ days is cold.
+  // Two carve-outs:
   //   • The insurance/personal book is isolated and is never swept.
   //   • An EXISTING customer (tag "Cliente viejo"/"Cliente nuevo") is
   //     never sent to Perdidos — not everyone buys every time, and we
-  //     don't want to burn a repeat buyer. Their cold lead is returned
-  //     to Ganados instead so they stay in the customer base.
-  // Everyone else (a genuine new lead who went cold) goes to Perdidos.
+  //     don't want to burn a repeat buyer. Their cold card is returned
+  //     to Ganados so they stay in the customer base.
+  // Everyone else (a genuine lead who went cold) goes to Perdidos.
   try {
-    if (nuevosLeadIds.length > 0 && perdidosByPipeline.size > 0) {
+    if (coldStageIds.length > 0 && perdidosByPipeline.size > 0) {
       // Contact ids that carry a protected (insurance/personal) tag.
       const { data: protTags } = await db
         .from('tags')
@@ -200,7 +204,7 @@ export async function runPipelineTimers(
       const { data: coldLeads } = await db
         .from('deals')
         .select('id, contact_id, pipeline_id, created_at, stage_entered_at')
-        .in('stage_id', nuevosLeadIds.map((s) => s.id))
+        .in('stage_id', coldStageIds.map((s) => s.id))
         .limit(1000)
       for (const d of coldLeads ?? []) {
         const anchor = (d.stage_entered_at as string) || (d.created_at as string)
