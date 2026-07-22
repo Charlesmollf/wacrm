@@ -148,29 +148,25 @@ export function ActivityChart() {
       since.setHours(0, 0, 0, 0);
       const sinceIso = since.toISOString();
 
-      const [{ data: msgs }, { data: sales }, { data: allSold }] =
-        await Promise.all([
-          db
-            .from("messages")
-            .select("conversation_id, created_at")
-            .eq("sender_type", "customer")
-            .gte("created_at", sinceIso)
-            .limit(20000),
-          db
-            .from("deals")
-            .select("sold_at")
-            .not("sold_at", "is", null)
-            .gte("sold_at", sinceIso)
-            .limit(20000),
-          // Full history of sold deals: needed to know each contact's
-          // FIRST sale (a buyer with an older sale is not "nuevo").
-          db
-            .from("deals")
-            .select("contact_id, sold_at")
-            .not("sold_at", "is", null)
-            .not("contact_id", "is", null)
-            .limit(20000),
-        ]);
+      const [{ data: msgs }, { data: paidDeals }] = await Promise.all([
+        db
+          .from("messages")
+          .select("conversation_id, created_at")
+          .eq("sender_type", "customer")
+          .gte("created_at", sinceIso)
+          .limit(20000),
+        // A "venta" = a deal marked Pagado. Its date is the sale date
+        // (sold_at) when the flow stamped one, else the confirmation
+        // date (updated_at). Counting only sold_at undercounted every
+        // sale confirmed manually without a sold_at — that's why the
+        // green line didn't match "Compras recientes" (which uses this
+        // same sold_at ?? updated_at fallback).
+        db
+          .from("deals")
+          .select("contact_id, sold_at, updated_at")
+          .eq("payment_status", "Pagado")
+          .limit(20000),
+      ]);
       if (cancelled) return;
 
       const convByDay = new Map<string, Set<string>>();
@@ -182,21 +178,26 @@ export function ActivityChart() {
         if (!convByDay.has(k)) convByDay.set(k, new Set());
         if (m.conversation_id) convByDay.get(k)!.add(m.conversation_id);
       }
-      const salesByDay = new Map<string, number>();
-      for (const s of (sales ?? []) as { sold_at: string }[]) {
-        const k = ymd(new Date(s.sold_at));
-        salesByDay.set(k, (salesByDay.get(k) ?? 0) + 1);
-      }
 
-      // First sale per contact → count of brand-new customers per day.
+      // Sale date + first-sale-per-contact, both from the SAME Pagado
+      // set so Ventas and Clientes nuevos stay consistent with each
+      // other and with the "Compras recientes" list.
+      const salesByDay = new Map<string, number>();
       const firstSale = new Map<string, number>();
-      for (const d of (allSold ?? []) as {
-        contact_id: string;
-        sold_at: string;
+      for (const d of (paidDeals ?? []) as {
+        contact_id: string | null;
+        sold_at: string | null;
+        updated_at: string | null;
       }[]) {
-        const t = new Date(d.sold_at).getTime();
-        const prev = firstSale.get(d.contact_id);
-        if (prev === undefined || t < prev) firstSale.set(d.contact_id, t);
+        const iso = d.sold_at ?? d.updated_at;
+        if (!iso) continue;
+        const k = ymd(new Date(iso));
+        salesByDay.set(k, (salesByDay.get(k) ?? 0) + 1);
+        if (d.contact_id) {
+          const t = new Date(iso).getTime();
+          const prev = firstSale.get(d.contact_id);
+          if (prev === undefined || t < prev) firstSale.set(d.contact_id, t);
+        }
       }
       const newByDay = new Map<string, number>();
       for (const t of firstSale.values()) {
