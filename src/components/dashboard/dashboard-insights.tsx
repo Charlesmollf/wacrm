@@ -20,11 +20,16 @@ import { Activity, BarChart3, ShoppingBag, Loader2 } from "lucide-react";
 
 const DAYS = 30;
 
-// Local YYYY-MM-DD (the dashboard runs in the store's own timezone).
+// YYYY-MM-DD in GUATEMALA time (UTC-6, no DST). Bucketing is pinned to
+// the store's real calendar day so a late-evening sale never slides into
+// the next day, and the chart reads identically regardless of the
+// viewer's browser timezone. (A sale at 8pm GT is stored ~2am UTC the
+// next day; naive local/UTC bucketing pushed it to the wrong day.)
 function ymd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const gt = new Date(d.getTime() - 6 * 3600000);
+  const y = gt.getUTCFullYear();
+  const m = String(gt.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(gt.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
