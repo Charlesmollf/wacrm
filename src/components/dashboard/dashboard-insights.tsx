@@ -166,6 +166,7 @@ export function ActivityChart() {
             .select("conversation_id, created_at")
             .eq("sender_type", "customer")
             .gte("created_at", sinceIso)
+            .order("created_at", { ascending: false })
             .limit(20000),
           // A "venta" = a deal marked Pagado. Its date is the sale date
           // (sold_at) when the flow stamped one, else the confirmation
@@ -176,11 +177,19 @@ export function ActivityChart() {
             .eq("payment_status", "Pagado")
             .limit(20000),
           // New contacts = people who wrote for the first time. One row
-          // per contact, dated by created_at.
+          // per contact, dated by created_at. Ordered NEWEST-first: the
+          // API caps results at 1000 rows, and a one-time bulk import
+          // (the Kommo cartera: ~1000 contacts on a single day) would
+          // otherwise fill that budget and push every recent organic
+          // contact out of the result — leaving the line flat at zero.
+          // Newest-first guarantees the last 30 days of real contacts
+          // are always included; the import day is hidden by the spike
+          // cap anyway.
           db
             .from("contacts")
             .select("created_at")
             .gte("created_at", sinceIso)
+            .order("created_at", { ascending: false })
             .limit(20000),
         ]);
       if (cancelled) return;
