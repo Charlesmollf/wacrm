@@ -58,7 +58,13 @@ interface TimerResult {
   movedToPerdidos: number
   taggedNuevo: number
   rotatedViejo: number
+  compradoRecienteExpired: number
 }
+
+/** A recent buyer wears "comprado-reciente" so broadcasts skip them
+ *  (don't spam someone who just bought). The tag auto-expires this many
+ *  days later so they re-enter the promo audience. */
+const COMPRADO_RECIENTE_DAYS = 15
 
 /** Café-agnostic tags that must NEVER be swept as cold coffee leads —
  *  the insurance/personal book stays isolated per the owner's rule. */
@@ -85,6 +91,7 @@ export async function runPipelineTimers(
     movedToPerdidos: 0,
     taggedNuevo: 0,
     rotatedViejo: 0,
+    compradoRecienteExpired: 0,
   }
   const now = new Date()
 
@@ -252,6 +259,37 @@ export async function runPipelineTimers(
     }
   } catch (err) {
     console.error('[pipeline-timers] nuevo→viejo rotation failed:', err)
+  }
+
+  // ---- 4) "comprado-reciente" expires after 15 days ------------------
+  // Removing the tag returns the buyer to the broadcast audience. The
+  // contact_tags row's created_at (set when they bought) is the clock.
+  try {
+    const { data: crTag } = await db
+      .from('tags')
+      .select('id')
+      .eq('name', 'comprado-reciente')
+      .maybeSingle()
+    if (crTag) {
+      const cutoff = new Date(
+        now.getTime() - COMPRADO_RECIENTE_DAYS * 86_400_000,
+      ).toISOString()
+      const { data: stale } = await db
+        .from('contact_tags')
+        .select('id')
+        .eq('tag_id', crTag.id)
+        .lte('created_at', cutoff)
+        .limit(1000)
+      for (const row of stale ?? []) {
+        const { error } = await db
+          .from('contact_tags')
+          .delete()
+          .eq('id', row.id as string)
+        if (!error) result.compradoRecienteExpired++
+      }
+    }
+  } catch (err) {
+    console.error('[pipeline-timers] comprado-reciente expiry failed:', err)
   }
 
   return result
