@@ -112,7 +112,39 @@ export async function sendPurchaseEvent(
       return { ok: false, attributed, error: 'no user identifiers to match on' }
     }
 
-    const event: Record<string, unknown> = {
+    const url = `https://graph.facebook.com/${META_API_VERSION}/${datasetId}/events`
+
+    // POST one event object; returns a normalized result.
+    const postEvent = async (
+      event: Record<string, unknown>,
+    ): Promise<{ ok: boolean; status: number; error?: string; fbtrace_id?: string }> => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: [event], access_token: accessToken }),
+        signal: AbortSignal.timeout(10000),
+      })
+      const json = (await res.json().catch(() => null)) as {
+        error?: {
+          message?: string
+          error_user_title?: string
+          error_user_msg?: string
+          error_subcode?: number
+          fbtrace_id?: string
+        }
+      } | null
+      if (!res.ok || json?.error) {
+        const e = json?.error ?? {}
+        const detail =
+          [e.message, e.error_user_title, e.error_user_msg]
+            .filter(Boolean)
+            .join(' | ') || `HTTP ${res.status}`
+        return { ok: false, status: res.status, error: detail, fbtrace_id: e.fbtrace_id }
+      }
+      return { ok: true, status: res.status }
+    }
+
+    const baseEvent: Record<string, unknown> = {
       event_name: 'Purchase',
       event_time: eventTime && eventTime > 0 ? eventTime : Math.floor(Date.now() / 1000),
       event_id: eventId,
@@ -123,55 +155,48 @@ export async function sendPurchaseEvent(
       },
     }
 
-    if (attributed) {
-      // Deterministic CTWA attribution.
-      event.action_source = 'business_messaging'
-      event.messaging_channel = 'whatsapp'
-    } else {
-      // Advanced-matching fallback — same source the Shopify pixel uses,
-      // so the campaign's "Compras" column counts it when Meta matches
-      // the buyer to an ad view/click.
-      event.action_source = 'website'
-      if (eventSourceUrl) event.event_source_url = eventSourceUrl
+    // Website event (advanced matching) — accepted by any pixel dataset,
+    // used as the fallback and for non-CTWA sales.
+    const websiteEvent = () => {
+      const ud = { ...userData }
+      // ctwa_clid / WABA id are only valid on a business_messaging event.
+      delete (ud as Record<string, unknown>).ctwa_clid
+      delete (ud as Record<string, unknown>).whatsapp_business_account_id
+      const ev = { ...baseEvent, user_data: ud, action_source: 'website' as const }
+      if (eventSourceUrl) (ev as Record<string, unknown>).event_source_url = eventSourceUrl
+      return ev
     }
 
-    const payload = {
-      data: [event],
-      access_token: accessToken,
+    if (!attributed) {
+      const r = await postEvent(websiteEvent())
+      return { ok: r.ok, attributed: false, status: r.status, error: r.error, fbtrace_id: r.fbtrace_id }
     }
 
-    const url = `https://graph.facebook.com/${META_API_VERSION}/${datasetId}/events`
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
-    })
-    const json = (await res.json().catch(() => null)) as {
-      error?: {
-        message?: string
-        error_user_title?: string
-        error_user_msg?: string
-        error_subcode?: number
-        fbtrace_id?: string
-      }
-    } | null
+    // Attributed CTWA sale: try the deterministic business_messaging path.
+    const bmEvent = { ...baseEvent, action_source: 'business_messaging', messaging_channel: 'whatsapp' }
+    const r1 = await postEvent(bmEvent)
+    if (r1.ok) return { ok: true, attributed: true, status: r1.status }
 
-    if (!res.ok || json?.error) {
-      const e = json?.error ?? {}
-      const detail =
-        [e.message, e.error_user_title, e.error_user_msg]
-          .filter(Boolean)
-          .join(' | ') || `HTTP ${res.status}`
+    // Meta rejects CTWA events when the dataset has no WhatsApp Business
+    // Account connected. Until that connection is made in Events Manager,
+    // don't lose the sale: retry as a website advanced-matching event so
+    // the pixel still gets the Purchase signal (feeds optimization). Full
+    // CTWA attribution resumes automatically once the WABA is connected.
+    const noWaba = /whatsapp business|business account|sin cuenta de whatsapp|associated/i.test(
+      r1.error ?? '',
+    )
+    if (noWaba) {
+      const r2 = await postEvent(websiteEvent())
+      // Report attributed=false so the caller/log reflects the fallback.
       return {
-        ok: false,
-        attributed,
-        status: res.status,
-        error: detail,
-        fbtrace_id: e.fbtrace_id,
+        ok: r2.ok,
+        attributed: false,
+        status: r2.status,
+        error: r2.ok ? `ctwa_rejected_fell_back_to_website (${r1.error})` : r2.error,
+        fbtrace_id: r2.fbtrace_id,
       }
     }
-    return { ok: true, attributed, status: res.status }
+    return { ok: false, attributed: true, status: r1.status, error: r1.error, fbtrace_id: r1.fbtrace_id }
   } catch (err) {
     return {
       ok: false,
