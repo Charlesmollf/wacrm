@@ -4,6 +4,7 @@ import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
 import { drainScheduledBroadcasts } from '@/lib/whatsapp/scheduled-broadcast'
 import { isBusinessHoursGT, runPipelineTimers } from '@/lib/crm/pipeline-timers'
+import { runLeadFollowups } from '@/lib/crm/lead-followup'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -63,6 +64,16 @@ export async function GET(request: Request) {
     console.error('[cron] scheduled broadcasts failed:', e)
   }
 
+  // Proactive follow-up: nudge cold leads while their 24h WhatsApp
+  // window is still open so they don't go silent into expiry. Messages
+  // customers → runs only in business hours (this block).
+  let followups: unknown = null
+  try {
+    followups = await runLeadFollowups(admin)
+  } catch (e) {
+    console.error('[cron] lead follow-ups failed:', e)
+  }
+
   const { data: due, error } = await admin
     .from('automation_pending_executions')
     .select('*')
@@ -74,7 +85,7 @@ export async function GET(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   if (!due || due.length === 0)
-    return NextResponse.json({ processed: 0, broadcastsSent, timers })
+    return NextResponse.json({ processed: 0, broadcastsSent, timers, followups })
 
   let processed = 0
   for (const row of due) {
@@ -104,5 +115,5 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed, broadcastsSent, timers })
+  return NextResponse.json({ processed, broadcastsSent, timers, followups })
 }
