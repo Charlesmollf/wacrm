@@ -93,9 +93,9 @@ export async function runLeadFollowups(db: SupabaseClient): Promise<FollowupResu
       byAccount.get(acct)!.add(cid)
     }
 
-    for (const [accountId, contactSet] of byAccount) {
+    for (const [accountId, contactSet] of Array.from(byAccount.entries())) {
       if (result.sent >= MAX_PER_RUN) break
-      const contactIds = [...contactSet]
+      const contactIds = Array.from(contactSet)
 
       // Dueño de la cuenta (para el user_id del envío).
       const { data: cfg } = await db
