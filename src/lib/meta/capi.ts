@@ -115,33 +115,63 @@ export async function sendPurchaseEvent(
     const url = `https://graph.facebook.com/${META_API_VERSION}/${datasetId}/events`
 
     // POST one event object; returns a normalized result.
+    //
+    // Retries transient failures (network blip, timeout, Meta 5xx / rate
+    // limit) up to 3 attempts with backoff — a purchase must not be lost
+    // to a one-second hiccup. Deterministic rejections (bad params, auth)
+    // are returned immediately: retrying them would never help.
+    // `event_id` makes Meta dedupe, so a retry can never double-count.
     const postEvent = async (
       event: Record<string, unknown>,
     ): Promise<{ ok: boolean; status: number; error?: string; fbtrace_id?: string }> => {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: [event], access_token: accessToken }),
-        signal: AbortSignal.timeout(10000),
-      })
-      const json = (await res.json().catch(() => null)) as {
-        error?: {
-          message?: string
-          error_user_title?: string
-          error_user_msg?: string
-          error_subcode?: number
-          fbtrace_id?: string
-        }
-      } | null
-      if (!res.ok || json?.error) {
-        const e = json?.error ?? {}
-        const detail =
-          [e.message, e.error_user_title, e.error_user_msg]
-            .filter(Boolean)
-            .join(' | ') || `HTTP ${res.status}`
-        return { ok: false, status: res.status, error: detail, fbtrace_id: e.fbtrace_id }
+      let last: { ok: boolean; status: number; error?: string; fbtrace_id?: string } = {
+        ok: false,
+        status: 0,
+        error: 'not attempted',
       }
-      return { ok: true, status: res.status }
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: [event], access_token: accessToken }),
+            signal: AbortSignal.timeout(10000),
+          })
+          const json = (await res.json().catch(() => null)) as {
+            error?: {
+              message?: string
+              error_user_title?: string
+              error_user_msg?: string
+              error_subcode?: number
+              code?: number
+              fbtrace_id?: string
+            }
+          } | null
+
+          if (res.ok && !json?.error) return { ok: true, status: res.status }
+
+          const e = json?.error ?? {}
+          const detail =
+            [e.message, e.error_user_title, e.error_user_msg]
+              .filter(Boolean)
+              .join(' | ') || `HTTP ${res.status}`
+          last = { ok: false, status: res.status, error: detail, fbtrace_id: e.fbtrace_id }
+
+          // 5xx / 429 → transient, worth another shot. Anything else is
+          // a real rejection; stop and report it.
+          const transient = res.status >= 500 || res.status === 429
+          if (!transient) return last
+        } catch (netErr) {
+          // Timeout / DNS / socket — always worth retrying.
+          last = {
+            ok: false,
+            status: 0,
+            error: netErr instanceof Error ? netErr.message : String(netErr),
+          }
+        }
+        if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1200))
+      }
+      return last
     }
 
     const baseEvent: Record<string, unknown> = {
