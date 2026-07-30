@@ -1278,12 +1278,31 @@ async function findOrCreateContact(
   )
 
   if (existingContact) {
-    // Update name if it changed
-    if (name && name !== existingContact.name) {
-      await supabaseAdmin()
-        .from('contacts')
-        .update({ name, updated_at: new Date().toISOString() })
-        .eq('id', existingContact.id)
+    // WhatsApp resends the customer's own profile name on EVERY inbound.
+    // Never let it clobber a name the team edited by hand in the CRM —
+    // that's why a renamed card reverted the moment the customer wrote
+    // again. `wa_profile_name` keeps tracking the raw profile value; the
+    // working `name` is only refreshed while nobody has renamed it (i.e.
+    // it still equals the last profile name we saw, or it's empty / just
+    // the phone number).
+    if (name) {
+      const prevProfile =
+        (existingContact as { wa_profile_name?: string | null }).wa_profile_name ?? null
+      const current = (existingContact.name ?? '').trim()
+      const nameWasManuallySet =
+        !!current && current !== (prevProfile ?? '').trim() && current !== phone
+
+      const patch: Record<string, unknown> = {}
+      if (name !== prevProfile) patch.wa_profile_name = name
+      if (!nameWasManuallySet && name !== existingContact.name) patch.name = name
+
+      if (Object.keys(patch).length > 0) {
+        patch.updated_at = new Date().toISOString()
+        await supabaseAdmin()
+          .from('contacts')
+          .update(patch)
+          .eq('id', existingContact.id)
+      }
     }
     return { contact: existingContact, wasCreated: false }
   }
@@ -1299,6 +1318,8 @@ async function findOrCreateContact(
       user_id: configOwnerUserId,
       phone,
       name: name || phone,
+      // Baseline for the "was this renamed by hand?" check above.
+      wa_profile_name: name || null,
     })
     .select()
     .single()
