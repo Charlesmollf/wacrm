@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireRole } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
-import { decrypt } from '@/lib/whatsapp/encryption'
-import { sendPurchaseEvent } from '@/lib/meta/capi'
+import { reportPurchaseForDeal } from '@/lib/meta/report-purchase'
 import { syncPaymentTag } from '@/lib/crm/payment-tags'
 
 /**
@@ -93,7 +92,10 @@ export async function POST(request: Request) {
     }
 
     // Fire the Meta Purchase signal (best-effort, service-role reads).
-    const capi = await reportPurchaseToMeta(accountId, deal)
+    // The shared helper retries transient failures and records the
+    // outcome on the deal, so a purchase that still doesn't make it is
+    // picked up automatically by the daily reconciler.
+    const capi = await reportPurchaseForDeal(supabaseAdmin(), accountId, deal)
 
     return NextResponse.json({ ok: true, capi })
   } catch (err) {
@@ -105,98 +107,5 @@ export async function POST(request: Request) {
       { error: err instanceof Error ? err.message : 'Unexpected error' },
       { status },
     )
-  }
-}
-
-async function reportPurchaseToMeta(
-  accountId: string,
-  deal: {
-    id: string
-    value: number | null
-    currency: string | null
-    contact_id: string | null
-    conversation_id: string | null
-  },
-): Promise<{ sent: boolean; reason?: string; attributed?: boolean; error?: string }> {
-  try {
-    const db = supabaseAdmin()
-
-    const { data: config } = await db
-      .from('whatsapp_config')
-      .select('capi_dataset_id, capi_access_token, access_token, waba_id')
-      .eq('account_id', accountId)
-      .maybeSingle()
-
-    const datasetId = config?.capi_dataset_id
-    if (!config || !datasetId) {
-      return { sent: false, reason: 'capi_not_configured' }
-    }
-
-    let accessToken: string
-    try {
-      accessToken = config.capi_access_token
-        ? decrypt(config.capi_access_token)
-        : decrypt(config.access_token)
-    } catch {
-      return { sent: false, reason: 'token_decrypt_failed' }
-    }
-
-    // Prefer a conversation that actually carries an ad click id; fall back
-    // to the deal's own conversation.
-    let ctwaClid: string | null = null
-    if (deal.contact_id) {
-      const { data: conv } = await db
-        .from('conversations')
-        .select('ctwa_clid')
-        .eq('contact_id', deal.contact_id)
-        .not('ctwa_clid', 'is', null)
-        .order('ctwa_captured_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      ctwaClid = conv?.ctwa_clid ?? null
-    }
-
-    let phone: string | null = null
-    let email: string | null = null
-    let firstName: string | null = null
-    let lastName: string | null = null
-    if (deal.contact_id) {
-      const { data: contact } = await db
-        .from('contacts')
-        .select('phone_normalized, phone, email, name')
-        .eq('id', deal.contact_id)
-        .maybeSingle()
-      phone = contact?.phone_normalized ?? contact?.phone ?? null
-      email = (contact as { email?: string | null } | null)?.email ?? null
-      const nameParts = (contact?.name ?? '').trim().split(/\s+/)
-      if (nameParts.length > 0 && nameParts[0]) firstName = nameParts[0]
-      if (nameParts.length > 1) lastName = nameParts[nameParts.length - 1]
-    }
-
-    // With a ctwa_clid this is a deterministic CTWA conversion; without
-    // one we still send it — advanced matching (hashed phone/name/email)
-    // lets Meta credit the campaign when this buyer saw or clicked an ad.
-    const result = await sendPurchaseEvent({
-      datasetId,
-      accessToken,
-      value: Number(deal.value) || 0,
-      currency: deal.currency || 'GTQ',
-      phone,
-      email,
-      firstName,
-      lastName,
-      ctwaClid,
-      eventId: `deal_${deal.id}`,
-      wabaId: config.waba_id ?? null,
-    })
-
-    if (!result.ok) {
-      console.error('[payments/confirm] CAPI purchase failed:', result.error)
-      return { sent: false, reason: 'capi_error', error: result.error }
-    }
-    return { sent: true, attributed: result.attributed }
-  } catch (err) {
-    console.error('[payments/confirm] reportPurchaseToMeta failed:', err)
-    return { sent: false, reason: 'exception' }
   }
 }
