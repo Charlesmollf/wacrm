@@ -233,11 +233,18 @@ export async function applyDealUpdates(
       updates.payment_method ||
       (deal as { payment_method?: string | null }).payment_method ||
       ''
+    const declaredStatus = (updates.payment_status || '').toLowerCase()
     if (
       updates.total &&
-      !updates.payment_status &&
-      /contra\s*entrega/i.test(effectiveMethod)
+      /contra\s*entrega/i.test(effectiveMethod) &&
+      !declaredStatus.includes('pagad') &&
+      !declaredStatus.includes('confirmar')
     ) {
+      // Antes solo entraba cuando el modelo NO mandaba estado. Pero el bot
+      // suele mandar estado_pago=Pendiente al confirmar un contra entrega, y
+      // eso dejaba el pedido fuera de la cola: el equipo nunca lo veía. Un
+      // contra entrega CONFIRMADO (con total) siempre va a "Por confirmar",
+      // salvo que ya venga como Pagado o Por confirmar.
       patch.payment_status = 'Por confirmar'
     }
 
