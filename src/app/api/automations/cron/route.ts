@@ -5,6 +5,7 @@ import type { AutomationContext } from '@/lib/automations/engine'
 import { drainScheduledBroadcasts } from '@/lib/whatsapp/scheduled-broadcast'
 import { isBusinessHoursGT, runPipelineTimers } from '@/lib/crm/pipeline-timers'
 import { runLeadFollowups } from '@/lib/crm/lead-followup'
+import { reconcileCapiPurchases } from '@/lib/crm/capi-reconcile'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -45,6 +46,15 @@ export async function GET(request: Request) {
     console.error('[cron] pipeline timers failed:', e)
   }
 
+  // Safety net: re-send any confirmed purchase whose Meta signal never
+  // completed. Talks only to Meta (never to customers), so it runs 24/7.
+  let capiReconcile: unknown = null
+  try {
+    capiReconcile = await reconcileCapiPurchases(admin)
+  } catch (e) {
+    console.error('[cron] capi reconcile failed:', e)
+  }
+
   const inBusinessHours = isBusinessHoursGT()
   if (!inBusinessHours) {
     // Everything below sends messages to customers — defer it all.
@@ -53,6 +63,7 @@ export async function GET(request: Request) {
       broadcastsSent: 0,
       deferred: true,
       timers,
+      capiReconcile,
     })
   }
 
@@ -85,7 +96,7 @@ export async function GET(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   if (!due || due.length === 0)
-    return NextResponse.json({ processed: 0, broadcastsSent, timers, followups })
+    return NextResponse.json({ processed: 0, broadcastsSent, timers, capiReconcile, followups })
 
   let processed = 0
   for (const row of due) {
@@ -115,5 +126,5 @@ export async function GET(request: Request) {
     processed++
   }
 
-  return NextResponse.json({ processed, broadcastsSent, timers, followups })
+  return NextResponse.json({ processed, broadcastsSent, timers, capiReconcile, followups })
 }
