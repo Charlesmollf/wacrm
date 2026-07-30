@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     // RLS scopes this to the caller's account — a missing row is "not yours".
     const { data: deal, error: dealErr } = await supabase
       .from('deals')
-      .select('id, value, currency, contact_id, conversation_id, pipeline_id')
+      .select('id, value, currency, contact_id, conversation_id, pipeline_id, sold_at, updated_at')
       .eq('id', dealId)
       .maybeSingle()
     if (dealErr) {
