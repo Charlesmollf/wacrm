@@ -28,7 +28,17 @@ import { toast } from "sonner";
 
 const PENDING_STATUS = "Por confirmar";
 
-/** Latest entry of the running combo_history string (newest line). */
+/**
+ * Products of the CURRENT order.
+ *
+ * `combo_history` keeps one dated line per product the customer added, so an
+ * order with several products looks like:
+ *   [2026-07-30] Mitico Coban
+ *   [2026-07-30] Africa Mia
+ * Reading only the newest line silently dropped every other product from the
+ * roastery summary. We take EVERY line stamped with the most recent date and
+ * join them, so a multi-product order ships complete.
+ */
 function latestCombo(history?: string | null): string | null {
   if (!history) return null;
   const lines = history
@@ -36,7 +46,19 @@ function latestCombo(history?: string | null): string | null {
     .map((l) => l.trim())
     .filter(Boolean);
   if (lines.length === 0) return null;
-  return lines[lines.length - 1].replace(/^\[[^\]]*\]\s*/, "");
+  const dateOf = (l: string) => l.match(/^\[([^\]]*)\]/)?.[1] ?? "";
+  const lastDate = dateOf(lines[lines.length - 1]);
+  const currentOrder = lastDate
+    ? lines.filter((l) => dateOf(l) === lastDate)
+    : [lines[lines.length - 1]];
+  const items = Array.from(
+    new Set(
+      currentOrder
+        .map((l) => l.replace(/^\[[^\]]*\]\s*/, "").trim())
+        .filter(Boolean),
+    ),
+  );
+  return items.length > 0 ? items.join(" + ") : null;
 }
 
 /** Build the order summary that gets pasted into the roastery group. */
