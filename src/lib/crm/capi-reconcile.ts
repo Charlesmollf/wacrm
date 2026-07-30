@@ -67,6 +67,8 @@ export async function reconcileCapiPurchases(
         currency: d.currency as string | null,
         contact_id: (d.contact_id as string | null) ?? null,
         conversation_id: (d.conversation_id as string | null) ?? null,
+        sold_at: (d.sold_at as string | null) ?? null,
+        updated_at: (d.updated_at as string | null) ?? null,
       })
       if (r.sent) out.resent++
       else out.failed++
