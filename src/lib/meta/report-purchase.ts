@@ -20,6 +20,9 @@ export interface DealForCapi {
   currency: string | null
   contact_id: string | null
   conversation_id?: string | null
+  /** Fecha REAL de la venta: Meta acredita la compra a ese día. */
+  sold_at?: string | null
+  updated_at?: string | null
 }
 
 export interface ReportResult {
@@ -90,6 +93,20 @@ export async function reportPurchaseForDeal(
       if (parts.length > 1) lastName = parts[parts.length - 1]
     }
 
+    // Fecha del evento = fecha REAL de la venta, no la del envío. Sin
+    // esto, una compra reenviada días después se le acredita a Meta el
+    // día del reenvío y descuadra el reporte (aparecían ventas viejas
+    // como si fueran de hoy). La CAPI solo acepta eventos de los últimos
+    // 7 días, así que se recorta a esa ventana.
+    const saleIso = deal.sold_at ?? deal.updated_at ?? null
+    const nowSec = Math.floor(Date.now() / 1000)
+    const minSec = nowSec - 7 * 86400 + 3600
+    let eventTime: number | null = null
+    if (saleIso) {
+      const t = Math.floor(new Date(saleIso).getTime() / 1000)
+      if (Number.isFinite(t)) eventTime = Math.min(Math.max(t, minSec), nowSec)
+    }
+
     const r = await sendPurchaseEvent({
       datasetId,
       accessToken,
@@ -101,6 +118,7 @@ export async function reportPurchaseForDeal(
       lastName,
       ctwaClid,
       eventId: `deal_${deal.id}`,
+      eventTime,
       wabaId: config.waba_id ?? null,
     })
 
