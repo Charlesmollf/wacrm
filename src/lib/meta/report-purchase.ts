@@ -127,7 +127,7 @@ async function stamp(
   db: SupabaseClient,
   dealId: string,
   status: 'sent' | 'failed' | 'skipped',
-  error: string | null,
+  error: string | null | undefined,
 ): Promise<void> {
   try {
     const { data: row } = await db
