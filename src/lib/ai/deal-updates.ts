@@ -30,7 +30,7 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...; notas=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido | Mixto (usa Mixto SOLO cuando en un mismo pedido unos productos van en grano y otros molidos; en ese caso escribe la molienda de cada producto entre parentesis dentro de combo, ej. combo=Maracaturra (grano), Maragogipe (molido)); ' +
-  'combo = el producto o combo que pidio el cliente (ej. Bourbon, Africa Mia, Procesos Secretos); direccion = direccion de entrega exacta; nit = NIT para factura; notas = nota o instruccion especial del pedido, sobre todo REGALOS (formato: Regalo para [destinatario], de parte de [comprador]); ' +
+  'combo = la lista COMPLETA Y ACTUAL de productos del pedido, no uno solo. Si el pedido lleva varios productos escribelos juntos separados por " + " (ej. combo=Mitico Coban + Africa Mia). Si el cliente CAMBIA de producto (se arrepiente y pide otro), manda SOLO el producto nuevo: el sistema reemplaza el anterior, no lo suma. direccion = direccion de entrega exacta; nit = NIT para factura; notas = nota o instruccion especial del pedido, sobre todo REGALOS (formato: Regalo para [destinatario], de parte de [comprador]); ' +
   'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. Si el cliente solo MODIFICA o REAFIRMA el MISMO pedido (corrige la molienda, aclara un producto, repite lo ya pedido) NO es venta nueva: reenvia el combo corregido pero NO incluyas total; el sistema actualiza el pedido en vez de duplicarlo. ' +
   'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. En pedidos CONTRA ENTREGA no hay comprobante: cuando el cliente confirma la compra (envias total y forma_pago=Contra entrega) el sistema lo manda solo a la cola de confirmacion para que el equipo lo prepare. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
@@ -202,23 +202,26 @@ export async function applyDealUpdates(
         patch.combo_history = line
       } else if (prev.includes(line)) {
         patch.combo_history = prev
-      } else if (updates.total) {
-        // A confirmed total means a genuinely NEW order → keep the full
-        // history, append a new dated line.
+      } else if (
+        updates.total &&
+        ((deal as { payment_status?: string | null }).payment_status || '')
+          .toLowerCase()
+          .includes('pagad')
+      ) {
+        // RECOMPRA genuina: el pedido anterior ya estaba pagado, así que
+        // esto es una orden nueva → se conserva el histórico y se agrega
+        // una línea nueva.
         patch.combo_history = `${prev}\n${line}`
       } else {
-        // No new total → modification/reaffirmation of the SAME order
-        // (e.g. the customer corrected the grind). Supersede today's
-        // existing line instead of stacking a near-duplicate; if there's
-        // no line for today, append.
-        const lines = prev.split('\n')
-        const todayIdx = lines.findIndex((l) => l.startsWith(`[${date}]`))
-        if (todayIdx >= 0) {
-          lines[todayIdx] = line
-          patch.combo_history = lines.join('\n')
-        } else {
-          patch.combo_history = `${prev}\n${line}`
-        }
+        // MISMO pedido en curso (el cliente corrigió la molienda, cambió
+        // de café o reafirmó): el combo que manda el bot es la lista
+        // COMPLETA y actual, así que REEMPLAZA la línea de hoy en vez de
+        // apilar productos. Antes se acumulaban: un cliente que cambiaba
+        // Colosos por África Mía terminaba con los dos en el pedido.
+        const previousDays = prev
+          .split('\n')
+          .filter((l) => l.trim() && !l.startsWith(`[${date}]`))
+        patch.combo_history = [...previousDays, line].join('\n')
       }
     }
 

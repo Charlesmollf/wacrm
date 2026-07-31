@@ -4,6 +4,7 @@ import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } from './deal-updates'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply } from './auto-reply'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -107,8 +108,37 @@ export async function dispatchInboundImageToAiReply(
       return
     }
 
+    // MEMORIA: el camino de visión respondía SOLO mirando la foto, sin el
+    // historial ni la ficha del cliente. Por eso, ante una imagen
+    // ambigua (un sticker, un meme, un pulgar arriba), saludaba como si
+    // fuera la primera vez y reiniciaba la venta. Ahora carga lo mismo
+    // que el camino de texto: la conversación previa y el pedido vigente.
+    let orderContext = ''
+    try {
+      const { data: lastDeal } = await db
+        .from('deals')
+        .select('value, payment_status, payment_method, combo_history, notes, created_at')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (lastDeal && (lastDeal.value || lastDeal.payment_status)) {
+        const lastCombo =
+          (lastDeal.combo_history || '').trim().split('\n').pop() || '—'
+        orderContext =
+          `\n\nPEDIDO ACTUAL DE ESTE CLIENTE SEGUN EL CRM: producto: ${lastCombo}; ` +
+          `total: Q${lastDeal.value ?? 0}; estado de pago: ${lastDeal.payment_status ?? 'sin registrar'}; ` +
+          `forma de pago: ${lastDeal.payment_method ?? '—'}` +
+          (lastDeal.notes ? `; nota: ${lastDeal.notes}` : '') +
+          `. NUNCA saludes como si fuera la primera vez ni reinicies la venta: continua la conversacion donde iba.`
+      }
+    } catch {
+      // best-effort
+    }
+
     const system =
-      `${config.systemPrompt}\n\n` +
+      `${config.systemPrompt}${orderContext}\n\n` +
       `[INSTRUCCIÓN ESPECIAL] El cliente acaba de enviar una IMAGEN (una foto o ` +
       `captura de pantalla). Analízala con cuidado. Si muestra un café o producto ` +
       `de Kaffeejager, identifícalo por la etiqueta, el color de la bolsa o el ` +
@@ -122,6 +152,36 @@ export async function dispatchInboundImageToAiReply(
     const userText = caption
       ? `El cliente envió esta imagen y escribió: "${caption}"`
       : 'El cliente envió esta imagen.'
+
+    // Historial previo (mismo que usa el camino de texto), normalizado a
+    // la forma que exige Anthropic: empieza en `user` y sin dos turnos
+    // seguidos del mismo rol. Se recortan los últimos 30 para acotar el
+    // costo de la llamada con imagen.
+    type VisionMsg = { role: 'user' | 'assistant'; content: unknown }
+    const priorMsgs: VisionMsg[] = []
+    try {
+      const history = await buildConversationContext(db, conversationId)
+      // La última entrada es el marcador de ESTA imagen; se descarta
+      // porque la imagen real va como bloque aparte más abajo.
+      const trimmed = history.slice(0, -1).slice(-30)
+      for (const h of trimmed) {
+        const role: 'user' | 'assistant' = h.role === 'user' ? 'user' : 'assistant'
+        if (priorMsgs.length === 0 && role === 'assistant') continue
+        const last = priorMsgs[priorMsgs.length - 1]
+        if (last && last.role === role && typeof last.content === 'string') {
+          last.content = `${last.content}\n${h.content}`
+        } else {
+          priorMsgs.push({ role, content: h.content })
+        }
+      }
+      // El mensaje con la imagen es de rol `user`: si el último turno del
+      // historial también lo es, se fusiona para no romper la alternancia.
+      if (priorMsgs.length > 0 && priorMsgs[priorMsgs.length - 1].role === 'user') {
+        priorMsgs.pop()
+      }
+    } catch (ctxErr) {
+      console.error('[ai image-reply] no se pudo cargar el historial:', ctxErr)
+    }
 
     let text: string
     try {
@@ -137,6 +197,7 @@ export async function dispatchInboundImageToAiReply(
           system,
           max_tokens: 1024,
           messages: [
+            ...priorMsgs,
             {
               role: 'user',
               content: [
