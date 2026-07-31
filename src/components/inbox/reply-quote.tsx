@@ -19,6 +19,9 @@ interface ReplyQuoteProps {
    *  quote must read against the primary surface rather than the neutral
    *  foreground — otherwise it goes low-contrast in light mode. */
   onPrimary?: boolean;
+  /** Thumbnail of the quoted message when it was a photo. Sin esto la cita
+   *  solo decía "[Photo]" y no se veía a QUÉ imagen respondía el cliente. */
+  mediaUrl?: string | null;
 }
 
 export function ReplyQuote({
@@ -26,6 +29,7 @@ export function ReplyQuote({
   preview,
   onDismiss,
   onPrimary = false,
+  mediaUrl = null,
 }: ReplyQuoteProps) {
   const t = useTranslations("Inbox.replyQuote");
   const isChip = !!onDismiss;
@@ -41,6 +45,14 @@ export function ReplyQuote({
             : "mb-1.5 rounded-md bg-background/20",
       )}
     >
+      {mediaUrl ? (
+        <img
+          src={mediaUrl}
+          alt=""
+          className="h-10 w-10 shrink-0 rounded object-cover"
+          loading="lazy"
+        />
+      ) : null}
       <div className="min-w-0 flex-1 overflow-hidden">
         <div
           className={cn(

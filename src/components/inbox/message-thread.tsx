@@ -57,6 +57,7 @@ interface ReplyDraft {
   id: string;
   authorLabel: string;
   preview: string;
+  mediaUrl?: string | null;
 }
 
 function renderTemplateBody(body: string, params: string[]): string {
@@ -763,6 +764,7 @@ export function MessageThread({
         id: msg.id,
         authorLabel: authorLabelFor(msg),
         preview: buildReplyPreview(msg, tQuote),
+        mediaUrl: msg.content_type === "image" ? msg.media_url : null,
       });
     },
     [authorLabelFor],
@@ -1123,6 +1125,8 @@ export function MessageThread({
                               ? t("me") 
                               : contact?.name || contact?.phone || "Unknown",
                           preview: buildReplyPreview(parent, tQuote),
+                          mediaUrl:
+                            parent.content_type === "image" ? parent.media_url : null,
                         }
                       : null;
                     const msgReactions = reactionsByMessageId.get(msg.id);
