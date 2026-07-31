@@ -113,6 +113,10 @@ export async function dispatchInboundImageToAiReply(
     // último combo). Sin esto el bot los pedía de cero aunque ya los
     // tuviéramos. Ahora los ve y solo los CONFIRMA.
     let customerContext = ''
+    // ¿El cliente ya pagó y su pedido va en camino? Entonces una foto suya
+    // es casi siempre seguimiento post-venta (le llegó el café), no una
+    // intención de comprar otra vez.
+    let postSale = false
     try {
       const { data: cont } = await db
         .from('contacts')
@@ -162,6 +166,8 @@ export async function dispatchInboundImageToAiReply(
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
+      const estado = String(lastDeal?.payment_status || '').toLowerCase()
+      postSale = estado.includes('pagad')
       if (lastDeal && (lastDeal.value || lastDeal.payment_status)) {
         const lastCombo =
           (lastDeal.combo_history || '').trim().split('\n').pop() || '—'
@@ -178,14 +184,28 @@ export async function dispatchInboundImageToAiReply(
 
     const system =
       `${config.systemPrompt}${customerContext}${orderContext}\n\n` +
-      `[INSTRUCCIÓN ESPECIAL] El cliente acaba de enviar una IMAGEN (una foto o ` +
-      `captura de pantalla). Analízala con cuidado. Si muestra un café o producto ` +
-      `de Kaffeejager, identifícalo por la etiqueta, el color de la bolsa o el ` +
-      `nombre visible, y responde como asesor: menciona el producto, su precio ` +
-      `según tu base de conocimiento, y pregunta si lo prefiere en grano o molido. ` +
-      `Si es un producto que no manejas, ofrece el más parecido de tu catálogo. ` +
-      `Si la imagen no muestra un producto claro, pregunta amablemente en qué le ` +
-      `puedes ayudar. Responde en español, breve y cálido, sin inventar precios.\n\n` +
+      (postSale
+        ? `[INSTRUCCIÓN ESPECIAL — CLIENTE CON PEDIDO YA PAGADO] Este cliente YA ` +
+          `compró y su pedido está pagado/en camino. Una foto suya casi siempre es ` +
+          `SEGUIMIENTO POST-VENTA: le llegó el café y lo está mostrando o ` +
+          `agradeciendo. NO le vuelvas a vender, NO le ofrezcas productos, NO ` +
+          `menciones precios y NO preguntes si lo quiere en grano o molido. ` +
+          `Responde como un buen vendedor humano que recuerda: agradécele, alégrate ` +
+          `con él y confirma que todo haya llegado bien (ej. "¡Qué alegría ver su ` +
+          `pedido ya en casa! 😊 ¿Llegó todo completo y en buen estado?"). Solo si ` +
+          `el cliente PIDE explícitamente comprar de nuevo, ahí sí retomas la venta. ` +
+          `NO emitas total ni combo en la marca de datos.`
+        : `[INSTRUCCIÓN ESPECIAL] El cliente acaba de enviar una IMAGEN (una foto o ` +
+          `captura de pantalla). Analízala con cuidado y SIEMPRE en el contexto de la ` +
+          `conversación previa. Si muestra un café o producto de Kaffeejager y el ` +
+          `cliente está buscando comprar, identifícalo por la etiqueta, el color de la ` +
+          `bolsa o el nombre visible, y responde como asesor: menciona el producto, su ` +
+          `precio según tu base de conocimiento, y pregunta si lo prefiere en grano o ` +
+          `molido. Si es un producto que no manejas, ofrece el más parecido de tu ` +
+          `catálogo. Si la imagen es un agradecimiento, un sticker o no muestra un ` +
+          `producto claro, NO arranques una venta: responde breve y cálido dentro del ` +
+          `hilo que venían hablando.`) +
+      ` Responde en español, breve y cálido, sin inventar precios.\n\n` +
       DEAL_EXTRACTION_INSTRUCTIONS
 
     const userText = caption
