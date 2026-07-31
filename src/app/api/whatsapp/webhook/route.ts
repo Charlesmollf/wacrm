@@ -938,23 +938,41 @@ async function processMessage(
   // "Confirmar pagos". Detect those here and route the contact's open deal
   // into the review queue (which also fires the owner email alert). The
   // queue is human-verified, so an occasional false positive is cheap.
-  const proofRe = /pagalo|comprobante|voucher|boleta|dep[oó]sito|recibo|transferenci|\.pdf/i
+  // Detector de comprobante de pago. ANTES bastaba con que apareciera la
+  // palabra "transferencia" para mandar el pedido a la cola de confirmar:
+  // un cliente preguntando "¿puedo hacer transferencia?" caía ahí sin
+  // haber pagado. Ahora se exige evidencia real: un documento adjunto, o
+  // una frase que afirme el pago hecho (ya pagué / hice el depósito /
+  // adjunto comprobante / aquí el voucher…).
+  const proofNounRe = /(comprobante|voucher|boleta|recibo|pagalo|\.pdf)/i
+  const paidPhraseRe =
+    /\b(ya|acabo de|acabe de|le|les)?\s*(pagu[eé]|pag[oó]|cancel[eé]|deposit[eé]|transfer[ií]|hice|realic[eé]|envi[eé]|mand[eé])\b[^.!?]{0,40}\b(pago|transferencia|dep[oó]sito|comprobante|voucher|boleta|recibo)\b/i
+  const paidShortRe = /\b(ya (est[aá] )?(pagado|pagu[eé]|cancelado)|pago (hecho|realizado|enviado)|listo el pago)\b/i
   const looksLikePaymentProof =
-    message.type === 'document' || (!!inboundText && proofRe.test(inboundText))
+    message.type === 'document' ||
+    (!!inboundText &&
+      (proofNounRe.test(inboundText) ||
+        paidPhraseRe.test(inboundText) ||
+        paidShortRe.test(inboundText)))
   if (looksLikePaymentProof) {
     void (async () => {
       try {
         const db = supabaseAdmin()
         const { data: deal } = await db
           .from('deals')
-          .select('id, payment_status')
+          .select('id, payment_status, value')
           .eq('account_id', accountId)
           .eq('contact_id', contactRecord.id)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
         const st = ((deal?.payment_status as string | null) || '').toLowerCase()
-        if (deal && !st.includes('pagad') && !st.includes('confirmar')) {
+        const dealValue = Number((deal as { value?: number | string | null } | null)?.value ?? 0)
+        // Sin monto capturado no hay nada que confirmar: mandarlo a la cola
+        // solo llenaba "Confirmar pagos" de tarjetas vacías (pedido en Q0,
+        // sin producto ni dirección). Se deja en negociación hasta que el
+        // pedido tenga total.
+        if (deal && dealValue > 0 && !st.includes('pagad') && !st.includes('confirmar')) {
           await applyDealUpdates(
             db,
             { accountId, contactId: contactRecord.id },
