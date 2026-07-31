@@ -324,14 +324,21 @@ export async function dispatchInboundImageToAiReply(
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
     void applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
-    await engineSendText({
-      accountId,
-      userId: configOwnerUserId,
-      conversationId,
-      contactId,
-      text: cleanText || deal.cleanText || text,
-      aiGenerated: true,
-    })
+    const finalText = enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || ''))
+    if (finalText) {
+      await engineSendText({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        text: finalText,
+        aiGenerated: true,
+      })
+    } else {
+      console.warn(
+        '[ai image-reply] la respuesta era solo una marca interna; no se envía nada al cliente.',
+      )
+    }
 
     for (const img of images) {
       try {
@@ -350,4 +357,44 @@ export async function dispatchInboundImageToAiReply(
   } catch (err) {
     console.error('[ai image-reply] dispatch failed:', err)
   }
+}
+
+/**
+ * Red de seguridad: quita cualquier marca interna que se haya escapado
+ * ([[SET: ...]], [[IMG: ...]], [[HANDOFF]]). El cliente jamás debe ver
+ * estas marcas — son instrucciones internas del sistema.
+ */
+function stripInternalMarkers(text: string): string {
+  return text
+    .replace(/\[\[[^\]]*\]\]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** Unica cuenta bancaria real del negocio. */
+const CUENTA_OFICIAL = '30-3093873-2'
+
+/**
+ * Candado anti-alucinación de datos bancarios.
+ *
+ * El modelo llegó a inventar números de cuenta ("3304629171", "3502469811")
+ * al responder por transferencia — un cliente podría mandar su dinero a una
+ * cuenta inexistente. Antes de enviar cualquier respuesta que hable de
+ * transferencia/cuenta, se reemplaza cualquier secuencia que parezca un
+ * número de cuenta por la cuenta oficial. Es una red de seguridad: la regla
+ * también está en el prompt, pero esto garantiza que NUNCA salga otro número.
+ */
+function enforceBankAccount(text: string): string {
+  // Solo se toca un número cuando viene precedido por una etiqueta de
+  // cuenta ("cuenta", "cta", "número", "monetaria"). Así un teléfono o un
+  // NIT en el mensaje nunca se altera por error.
+  return text.replace(
+    /((?:cuenta|cta\.?|n[uú]mero|no\.?|monetaria)\s*(?:monetaria|bam)?\s*[:#-]?\s*\**\s*)(\d[\d\s-]{6,24}\d)/gi,
+    (full, etiqueta: string, numero: string) => {
+      const soloDigitos = numero.replace(/\D/g, '')
+      if (soloDigitos === CUENTA_OFICIAL.replace(/\D/g, '')) return full
+      return `${etiqueta}${CUENTA_OFICIAL}`
+    },
+  )
 }
