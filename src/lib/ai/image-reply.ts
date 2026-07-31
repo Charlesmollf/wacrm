@@ -108,6 +108,45 @@ export async function dispatchInboundImageToAiReply(
       return
     }
 
+    // FICHA DEL CLIENTE: muchos contactos vienen importados de Kommo con
+    // sus datos ya cargados (correo, dirección, preferencia de molienda,
+    // último combo). Sin esto el bot los pedía de cero aunque ya los
+    // tuviéramos. Ahora los ve y solo los CONFIRMA.
+    let customerContext = ''
+    try {
+      const { data: cont } = await db
+        .from('contacts')
+        .select('name, phone, email')
+        .eq('id', contactId)
+        .maybeSingle()
+      const { data: notes } = await db
+        .from('contact_notes')
+        .select('content')
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(3)
+      const notasTxt = (notes ?? [])
+        .map((n) => String((n as { content?: string }).content || '').trim())
+        .filter(Boolean)
+        .join(' | ')
+        .slice(0, 600)
+      const partes: string[] = []
+      if (cont?.name) partes.push(`nombre: ${cont.name}`)
+      if (cont?.email) partes.push(`correo: ${cont.email}`)
+      if (cont?.phone) partes.push(`telefono: ${cont.phone}`)
+      if (notasTxt) partes.push(`notas/historial: ${notasTxt}`)
+      if (partes.length > 0) {
+        customerContext =
+          `\n\nDATOS QUE YA TENEMOS DE ESTE CLIENTE: ${partes.join('; ')}. ` +
+          `REGLA: si un dato ya lo tienes (nombre, correo, direccion, molienda preferida, combo habitual), ` +
+          `NO lo pidas de cero: CONFIRMALO en una sola linea (ej. "\u00bfSe lo enviamos a [direccion] como la vez pasada?" ` +
+          `o "\u00bfLo prefiere molido como siempre?"). Pide unicamente lo que realmente falte. ` +
+          `Si el cliente corrige un dato, usa el nuevo.`
+      }
+    } catch {
+      // best-effort
+    }
+
     // MEMORIA: el camino de visión respondía SOLO mirando la foto, sin el
     // historial ni la ficha del cliente. Por eso, ante una imagen
     // ambigua (un sticker, un meme, un pulgar arriba), saludaba como si
@@ -138,7 +177,7 @@ export async function dispatchInboundImageToAiReply(
     }
 
     const system =
-      `${config.systemPrompt}${orderContext}\n\n` +
+      `${config.systemPrompt}${customerContext}${orderContext}\n\n` +
       `[INSTRUCCIÓN ESPECIAL] El cliente acaba de enviar una IMAGEN (una foto o ` +
       `captura de pantalla). Analízala con cuidado. Si muestra un café o producto ` +
       `de Kaffeejager, identifícalo por la etiqueta, el color de la bolsa o el ` +
