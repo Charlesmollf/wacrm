@@ -9,7 +9,8 @@ import {
 } from "@/lib/inbox/conversations";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, CheckSquare, Square, Archive, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,11 @@ export function ConversationList({
   // matches if its contact carries any selected tag), consistent with
   // Broadcast audience filtering. Company is an exact match on the field.
   const [tags, setTags] = useState<Tag[]>([]);
+  // Modo selección múltiple: permite cerrar en bloque las conversaciones
+  // ya atendidas en vez de abrirlas una por una para limpiar la bandeja.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [closing, setClosing] = useState(false);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
 
@@ -220,7 +226,51 @@ export function ConversationList({
     [onSelect]
   );
 
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }, []);
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false);
+    setSelectedIds([]);
+  }, []);
+
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
+
+  // Cierra en bloque. Se actualiza la lista en memoria al vuelo para que
+  // la bandeja se vea limpia de inmediato, sin esperar un refetch.
+  const closeSelected = useCallback(async () => {
+    if (selectedIds.length === 0 || closing) return;
+    setClosing(true);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("conversations")
+      .update({ status: "closed" })
+      .in("id", selectedIds);
+    setClosing(false);
+    if (error) {
+      toast.error("No se pudieron cerrar las conversaciones");
+      return;
+    }
+    const closedSet = new Set(selectedIds);
+    onConversationsLoadedRef.current(
+      conversations.map((c) =>
+        closedSet.has(c.id) ? { ...c, status: "closed" as ConversationStatus } : c,
+      ),
+    );
+    toast.success(
+      selectedIds.length === 1
+        ? "1 conversación cerrada"
+        : `${selectedIds.length} conversaciones cerradas`,
+    );
+    exitSelectMode();
+  }, [selectedIds, closing, conversations, exitSelectMode]);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(filtered.map((c) => c.id));
+  }, [filtered]);
 
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
@@ -393,6 +443,53 @@ export function ConversationList({
         )}
       </div>
 
+      {/* Barra de selección múltiple */}
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+        {selectMode ? (
+          <>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selectAllVisible}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                Todas ({filtered.length})
+              </button>
+              <span className="text-[11px] text-muted-foreground">
+                {selectedIds.length} seleccionadas
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={closeSelected}
+                disabled={selectedIds.length === 0 || closing}
+                className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+              >
+                {closing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Archive className="h-3 w-3" />
+                )}
+                Cerrar
+              </button>
+              <button
+                onClick={exitSelectMode}
+                className="rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+              >
+                Cancelar
+              </button>
+            </div>
+          </>
+        ) : (
+          <button
+            onClick={() => setSelectMode(true)}
+            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <CheckSquare className="h-3 w-3" />
+            Seleccionar para cerrar
+          </button>
+        )}
+      </div>
+
       {/* Conversation Items.
           `min-h-0` is load-bearing: a flex child defaults to
           min-height:auto, so without it this ScrollArea grows to fit
@@ -417,6 +514,9 @@ export function ConversationList({
                 isActive={conv.id === activeConversationId}
                 onSelect={handleSelect}
                 t={t}
+                selectMode={selectMode}
+                selected={selectedIds.includes(conv.id)}
+                onToggleSelect={toggleSelected}
               />
             ))}
           </div>
@@ -431,6 +531,9 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 function ConversationItem({
@@ -438,14 +541,22 @@ function ConversationItem({
   isActive,
   onSelect,
   t,
+  selectMode = false,
+  selected = false,
+  onToggleSelect,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const displayName = contact?.name || contact?.phone || t("unknown");
   const initials = displayName.charAt(0).toUpperCase();
 
   const handleClick = useCallback(() => {
+    // En modo selección el clic marca/desmarca en vez de abrir el chat.
+    if (selectMode) {
+      onToggleSelect?.(conversation.id);
+      return;
+    }
     onSelect(conversation);
-  }, [onSelect, conversation]);
+  }, [onSelect, conversation, selectMode, onToggleSelect]);
 
   const timeAgo = conversation.last_message_at
     ? formatDistanceToNow(new Date(conversation.last_message_at), {
@@ -458,9 +569,19 @@ function ConversationItem({
       onClick={handleClick}
       className={cn(
         "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
-        isActive && "border-l-2 border-primary bg-muted/70"
+        isActive && "border-l-2 border-primary bg-muted/70",
+        selected && "bg-primary/10"
       )}
     >
+      {selectMode && (
+        <span className="mt-2 shrink-0 text-muted-foreground">
+          {selected ? (
+            <CheckSquare className="h-4 w-4 text-primary" />
+          ) : (
+            <Square className="h-4 w-4" />
+          )}
+        </span>
+      )}
       {/* Avatar */}
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-foreground">
         {contact?.avatar_url ? (
