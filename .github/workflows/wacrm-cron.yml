@@ -1,8 +1,12 @@
 name: wacrm automations cron
 
+# DESACTIVADO. El reloj del CRM ahora vive en Supabase (pg_cron), que
+# despierta al sitio cada 5 minutos con /api/cron/tick. Este workflow
+# quedaba corriendo en paralelo, fallaba (el endpoint tarda más que su
+# tiempo de espera) y llenaba el correo del dueño de avisos de "All jobs
+# have failed". Se deja solo como disparo manual por si algún día hace
+# falta forzar una corrida desde la pestaña Actions.
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,4 +15,4 @@ jobs:
     steps:
       - name: Drain pending automations
         run: |
-          curl -s -H "x-cron-secret: ${{ secrets.WACRM_CRON_SECRET }}" https://aqua-gaur-598822.hostingersite.com/api/automations/cron
+          curl -s -m 60 -H "x-cron-secret: ${{ secrets.WACRM_CRON_SECRET }}" https://aqua-gaur-598822.hostingersite.com/api/automations/cron || true
