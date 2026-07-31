@@ -786,16 +786,26 @@ async function processMessage(
     ? new Date(conversation.last_outbound_at).getTime()
     : 0
 
-  // Update conversation
+  // Update conversation.
+  //
+  // Si el chat estaba CERRADO y el cliente vuelve a escribir, se reabre
+  // solo. El equipo cierra todo lo ya atendido y trabaja mirando sólo los
+  // chats en "Open": sin esto, un cliente que escribe sobre una
+  // conversación cerrada quedaría invisible y sin respuesta.
+  const convUpdate: Record<string, unknown> = {
+    last_message_text: contentText || `[${message.type}]`,
+    last_message_at: new Date().toISOString(),
+    last_inbound_at: new Date().toISOString(),
+    unread_count: (conversation.unread_count || 0) + 1,
+    updated_at: new Date().toISOString(),
+  }
+  if (conversation.status === 'closed') {
+    convUpdate.status = 'open'
+  }
+
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
-    .update({
-      last_message_text: contentText || `[${message.type}]`,
-      last_message_at: new Date().toISOString(),
-      last_inbound_at: new Date().toISOString(),
-      unread_count: (conversation.unread_count || 0) + 1,
-      updated_at: new Date().toISOString(),
-    })
+    .update(convUpdate)
     .eq('id', conversation.id)
 
   if (convError) {
