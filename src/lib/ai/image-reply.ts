@@ -6,6 +6,7 @@ import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } fr
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply } from './auto-reply'
+import { buildCustomerFile } from './customer-file'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -108,48 +109,18 @@ export async function dispatchInboundImageToAiReply(
       return
     }
 
-    // FICHA DEL CLIENTE: muchos contactos vienen importados de Kommo con
-    // sus datos ya cargados (correo, dirección, preferencia de molienda,
-    // último combo). Sin esto el bot los pedía de cero aunque ya los
-    // tuviéramos. Ahora los ve y solo los CONFIRMA.
-    let customerContext = ''
+    // FICHA DEL CLIENTE: mismos datos y misma regla de estilo que el
+    // camino de texto — que datos ya tenemos, cuales faltan, y la
+    // prohibicion de repetir el resumen en cada mensaje.
+    const { context: customerContext } = await buildCustomerFile(
+      db,
+      accountId,
+      contactId,
+    )
     // ¿El cliente ya pagó y su pedido va en camino? Entonces una foto suya
     // es casi siempre seguimiento post-venta (le llegó el café), no una
     // intención de comprar otra vez.
     let postSale = false
-    try {
-      const { data: cont } = await db
-        .from('contacts')
-        .select('name, phone, email')
-        .eq('id', contactId)
-        .maybeSingle()
-      const { data: notes } = await db
-        .from('contact_notes')
-        .select('content')
-        .eq('contact_id', contactId)
-        .order('created_at', { ascending: false })
-        .limit(3)
-      const notasTxt = (notes ?? [])
-        .map((n) => String((n as { content?: string }).content || '').trim())
-        .filter(Boolean)
-        .join(' | ')
-        .slice(0, 600)
-      const partes: string[] = []
-      if (cont?.name) partes.push(`nombre: ${cont.name}`)
-      if (cont?.email) partes.push(`correo: ${cont.email}`)
-      if (cont?.phone) partes.push(`telefono: ${cont.phone}`)
-      if (notasTxt) partes.push(`notas/historial: ${notasTxt}`)
-      if (partes.length > 0) {
-        customerContext =
-          `\n\nDATOS QUE YA TENEMOS DE ESTE CLIENTE: ${partes.join('; ')}. ` +
-          `REGLA: si un dato ya lo tienes (nombre, correo, direccion, molienda preferida, combo habitual), ` +
-          `NO lo pidas de cero: CONFIRMALO en una sola linea (ej. "\u00bfSe lo enviamos a [direccion] como la vez pasada?" ` +
-          `o "\u00bfLo prefiere molido como siempre?"). Pide unicamente lo que realmente falte. ` +
-          `Si el cliente corrige un dato, usa el nuevo.`
-      }
-    } catch {
-      // best-effort
-    }
 
     // MEMORIA: el camino de visión respondía SOLO mirando la foto, sin el
     // historial ni la ficha del cliente. Por eso, ante una imagen

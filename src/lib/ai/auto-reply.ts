@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
+import { buildCustomerFile } from './customer-file'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
@@ -100,44 +101,13 @@ export async function dispatchInboundToAiReply(
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
 
-    // FICHA DEL CLIENTE: muchos contactos vienen importados de Kommo con
-    // sus datos ya cargados (correo, dirección, preferencia de molienda,
-    // último combo). Sin esto el bot los pedía de cero aunque ya los
-    // tuviéramos. Ahora los ve y solo los CONFIRMA.
-    let customerContext = ''
-    try {
-      const { data: cont } = await db
-        .from('contacts')
-        .select('name, phone, email')
-        .eq('id', contactId)
-        .maybeSingle()
-      const { data: notes } = await db
-        .from('contact_notes')
-        .select('content')
-        .eq('contact_id', contactId)
-        .order('created_at', { ascending: false })
-        .limit(3)
-      const notasTxt = (notes ?? [])
-        .map((n) => String((n as { content?: string }).content || '').trim())
-        .filter(Boolean)
-        .join(' | ')
-        .slice(0, 600)
-      const partes: string[] = []
-      if (cont?.name) partes.push(`nombre: ${cont.name}`)
-      if (cont?.email) partes.push(`correo: ${cont.email}`)
-      if (cont?.phone) partes.push(`telefono: ${cont.phone}`)
-      if (notasTxt) partes.push(`notas/historial: ${notasTxt}`)
-      if (partes.length > 0) {
-        customerContext =
-          `\n\nDATOS QUE YA TENEMOS DE ESTE CLIENTE: ${partes.join('; ')}. ` +
-          `REGLA: si un dato ya lo tienes (nombre, correo, direccion, molienda preferida, combo habitual), ` +
-          `NO lo pidas de cero: CONFIRMALO en una sola linea (ej. "\u00bfSe lo enviamos a [direccion] como la vez pasada?" ` +
-          `o "\u00bfLo prefiere molido como siempre?"). Pide unicamente lo que realmente falte. ` +
-          `Si el cliente corrige un dato, usa el nuevo.`
-      }
-    } catch {
-      // best-effort
-    }
+    // FICHA DEL CLIENTE: que datos ya tenemos, cuales faltan, y la
+    // regla de estilo que impide repetir el resumen en cada mensaje.
+    const { context: customerContext } = await buildCustomerFile(
+      db,
+      accountId,
+      contactId,
+    )
 
     // Ground the model in this contact's CURRENT order (the CRM is the
     // source of truth) so a question days later ("¿cuándo llega?"), a
