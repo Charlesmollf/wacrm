@@ -51,20 +51,44 @@ function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
   return merged
 }
 
-type SystemParam =
-  | string
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '1h' } }[]
+interface TextBlock {
+  type: 'text'
+  text: string
+  cache_control?: { type: 'ephemeral'; ttl: '1h' }
+}
 
-/** Marca el prompt de sistema como cacheable cuando vale la pena. */
-function cacheableSystem(systemPrompt: string): SystemParam {
-  if (!systemPrompt || systemPrompt.length < CACHE_MIN_CHARS) return systemPrompt
-  return [
-    {
-      type: 'text',
-      text: systemPrompt,
-      cache_control: { type: 'ephemeral', ttl: '1h' },
-    },
+type SystemParam = string | TextBlock[]
+
+/**
+ * Parte el prompt de sistema en DOS bloques: el prefijo estable (que se
+ * cachea) y el resto (que cambia en cada llamada).
+ *
+ * Esto es el corazon del asunto. El cache de Anthropic solo acierta si
+ * el prefijo es IDENTICO byte por byte entre llamadas. Al principio
+ * marcamos como cacheable el prompt ENTERO — pero al final del prompt le
+ * pegamos la ficha del cliente y su pedido, que cambian con cada
+ * conversacion. Resultado: el prefijo mutaba en cada mensaje y el cache
+ * no acertaba NUNCA, en silencio y pagando ademas el sobrecosto de
+ * escritura.
+ *
+ * Si el prefijo no calza (bug de armado en otra parte), preferimos NO
+ * cachear y avisar, antes que cachear mal y pagar de mas.
+ */
+export function splitSystem(systemPrompt: string, cachePrefix?: string): SystemParam {
+  const prefijo = cachePrefix ?? ''
+  if (!prefijo || prefijo.length < CACHE_MIN_CHARS) return systemPrompt
+  if (!systemPrompt.startsWith(prefijo)) {
+    console.warn(
+      '[anthropic cache] el cachePrefix no es prefijo literal del systemPrompt — se envia sin cachear',
+    )
+    return systemPrompt
+  }
+  const resto = systemPrompt.slice(prefijo.length)
+  const bloques: TextBlock[] = [
+    { type: 'text', text: prefijo, cache_control: { type: 'ephemeral', ttl: '1h' } },
   ]
+  if (resto.trim()) bloques.push({ type: 'text', text: resto })
+  return bloques
 }
 
 /**
@@ -73,7 +97,7 @@ function cacheableSystem(systemPrompt: string): SystemParam {
  * in `generateReply`).
  */
 export async function generateAnthropic(args: ProviderArgs): Promise<ProviderResult> {
-  const { apiKey, model, systemPrompt, messages, timeoutMs } = args
+  const { apiKey, model, systemPrompt, cachePrefix, messages, timeoutMs } = args
 
   let res: Response
   try {
@@ -87,7 +111,7 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
       },
       body: JSON.stringify({
         model,
-        system: cacheableSystem(systemPrompt),
+        system: splitSystem(systemPrompt, cachePrefix),
         max_tokens: MAX_OUTPUT_TOKENS,
         messages: normalizeForAnthropic(messages),
       }),
@@ -112,6 +136,19 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
       code: 'empty_response',
     })
   }
+  // Sin esta traza es imposible saber si el cache esta acertando: una
+  // llamada mal cacheada se ve EXACTAMENTE igual que una bien cacheada,
+  // solo cuesta mas. Lectura: en el primer mensaje de una rafaga
+  // `creation` debe ser alto y `read` 0; del segundo en adelante `read`
+  // debe ser alto y `fresh` bajo. Si `read` se queda en 0, el prefijo
+  // esta cambiando entre llamadas.
+  const u = data?.usage
+  console.log(
+    `[anthropic cache] creation=${u?.cache_creation_input_tokens ?? 0} ` +
+      `read=${u?.cache_read_input_tokens ?? 0} fresh=${u?.input_tokens ?? 0} ` +
+      `output=${u?.output_tokens ?? 0}`,
+  )
+
   // Anthropic reports input/output but no total — normalizeUsage sums.
   // `input_tokens` NO incluye lo servido desde cache: hay que sumarlo
   // para que el contador de uso del CRM siga reflejando el tamano real

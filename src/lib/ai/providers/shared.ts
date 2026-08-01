@@ -10,6 +10,13 @@ export interface ProviderArgs {
   systemPrompt: string
   messages: ChatMessage[]
   timeoutMs: number
+  /**
+   * Trozo INICIAL de `systemPrompt` que es identico en todas las
+   * llamadas (persona, reglas, catalogo, base de conocimiento). Debe ser
+   * un prefijo literal de `systemPrompt`. Anthropic lo usa como bloque
+   * cacheable; los demas proveedores lo ignoran.
+   */
+  cachePrefix?: string
 }
 
 /**
