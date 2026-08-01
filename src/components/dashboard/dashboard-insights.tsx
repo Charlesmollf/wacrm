@@ -16,7 +16,8 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Activity, BarChart3, ShoppingBag, Loader2 } from "lucide-react";
+import { Activity, BarChart3, ShoppingBag, Loader2, MessageSquare } from "lucide-react";
+import Link from "next/link";
 
 const DAYS = 30;
 
@@ -407,6 +408,8 @@ interface PurchaseRow {
   name: string;
   value: number;
   at: string | null;
+  /** Chat del cliente, si existe. null = contacto sin conversacion. */
+  conversationId: string | null;
 }
 
 export function RecentPurchases({ currency }: { currency: string }) {
@@ -416,32 +419,67 @@ export function RecentPurchases({ currency }: { currency: string }) {
     let cancelled = false;
     (async () => {
       const db = createClient();
+      // Se piden de mas y se ordenan aca por la fecha REAL de venta
+      // (`sold_at`). Ordenar por `updated_at` en el servidor hacia que
+      // cualquier retoque a un pedido viejo lo disparara al tope de la
+      // lista como si se hubiera vendido hoy.
       const { data } = await db
         .from("deals")
         .select(
-          "id, value, sold_at, updated_at, payment_status, contact:contacts(name, phone)",
+          "id, value, sold_at, updated_at, payment_status, conversation_id, contact_id, contact:contacts(name, phone)",
         )
         .eq("payment_status", "Pagado")
         .order("updated_at", { ascending: false })
-        .limit(20);
+        .limit(60);
       if (cancelled) return;
       type Row = {
         id: string;
         value: number | null;
         sold_at: string | null;
         updated_at: string | null;
+        conversation_id: string | null;
+        contact_id: string | null;
         contact:
           | { name: string | null; phone: string | null }
           | { name: string | null; phone: string | null }[]
           | null;
       };
-      const mapped: PurchaseRow[] = ((data ?? []) as Row[]).map((d) => {
+      const raw = ((data ?? []) as Row[])
+        .map((d) => ({ d, at: d.sold_at ?? d.updated_at }))
+        .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
+        .slice(0, 20);
+
+      // Un pedido no siempre guarda su conversacion (los importados de
+      // Kommo no tienen ninguna). Se resuelve el chat por contacto para
+      // los que falten; los que sigan sin chat se muestran sin boton.
+      const faltantes = raw
+        .filter((r) => !r.d.conversation_id && r.d.contact_id)
+        .map((r) => r.d.contact_id as string);
+      const porContacto = new Map<string, string>();
+      if (faltantes.length > 0) {
+        const { data: convs } = await db
+          .from("conversations")
+          .select("id, contact_id, last_message_at")
+          .in("contact_id", faltantes)
+          .order("last_message_at", { ascending: false });
+        for (const c of (convs ?? []) as { id: string; contact_id: string | null }[]) {
+          if (c.contact_id && !porContacto.has(c.contact_id)) {
+            porContacto.set(c.contact_id, c.id);
+          }
+        }
+      }
+      if (cancelled) return;
+
+      const mapped: PurchaseRow[] = raw.map(({ d, at }) => {
         const c = Array.isArray(d.contact) ? d.contact[0] : d.contact;
         return {
           id: d.id,
           name: c?.name || c?.phone || "Cliente",
           value: Number(d.value) || 0,
-          at: d.sold_at ?? d.updated_at,
+          at,
+          conversationId:
+            d.conversation_id ??
+            (d.contact_id ? (porContacto.get(d.contact_id) ?? null) : null),
         };
       });
       setRows(mapped);
@@ -485,9 +523,28 @@ export function RecentPurchases({ currency }: { currency: string }) {
                   ) : null}
                 </div>
               </div>
-              <span className="shrink-0 text-sm font-semibold text-primary">
-                {formatCurrency(r.value, currency)}
-              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-sm font-semibold text-primary">
+                  {formatCurrency(r.value, currency)}
+                </span>
+                {r.conversationId ? (
+                  <Link
+                    href={`/inbox?c=${r.conversationId}`}
+                    title="Abrir el chat"
+                    aria-label={`Abrir el chat de ${r.name}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                  </Link>
+                ) : (
+                  <span
+                    title="Este cliente no tiene chat en el inbox (viene de la cartera importada)"
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground/40"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </div>
             </li>
           ))}
         </ul>
