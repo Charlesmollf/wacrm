@@ -2,12 +2,11 @@ import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { buildCustomerFile } from './customer-file'
 import { buildConversationContext } from './context'
-import { retrieveKnowledge } from './knowledge'
+import { retrieveAllKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
-import { latestUserMessage } from './query'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates } from './deal-updates'
@@ -162,30 +161,39 @@ export async function dispatchInboundToAiReply(
       return
     }
 
-    // Ground the reply in the account's knowledge base (best-effort).
-    const knowledge = await retrieveKnowledge(
-      db,
-      accountId,
-      config,
-      latestUserMessage(messages),
-    )
+    // PREFIJO ESTABLE (se cachea): persona + reglas + catalogo + la base
+    // de conocimiento COMPLETA. Identico en toda llamada, para todos los
+    // clientes. Antes aqui iba una busqueda por palabras clave que
+    // devolvia fragmentos distintos en cada mensaje y rompia el cache.
+    const knowledge = await retrieveAllKnowledge(db, accountId)
+    const stableSystem = buildSystemPrompt({
+      userPrompt: config.systemPrompt,
+      mode: 'auto_reply',
+      knowledge,
+    })
 
-    const systemPrompt =
-      buildSystemPrompt({
-        userPrompt: config.systemPrompt,
-        mode: 'auto_reply',
-        knowledge,
-      }) + customerContext + orderContext
+    // VOLATIL (nunca se cachea): va DESPUES del prefijo, siempre.
+    const systemPrompt = stableSystem + customerContext + orderContext
 
     // One retry on transient provider failures (overloaded / network
     // blip): a single hiccup must not leave the customer unanswered.
     let reply
     try {
-      reply = await generateReply({ config, systemPrompt, messages })
+      reply = await generateReply({
+        config,
+        systemPrompt,
+        cachePrefix: stableSystem,
+        messages,
+      })
     } catch (genErr) {
       console.error('[ai auto-reply] generateReply failed, retrying once:', genErr)
       await new Promise((r) => setTimeout(r, 2000))
-      reply = await generateReply({ config, systemPrompt, messages })
+      reply = await generateReply({
+        config,
+        systemPrompt,
+        cachePrefix: stableSystem,
+        messages,
+      })
     }
     const { text, handoff, usage } = reply
 

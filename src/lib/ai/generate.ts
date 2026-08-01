@@ -13,6 +13,11 @@ export interface GenerateArgs {
   config: AiConfig
   /** Fully-built system prompt (see `buildSystemPrompt`). */
   systemPrompt: string
+  /**
+   * Prefijo estable de `systemPrompt` (identico en toda llamada) para
+   * que Anthropic lo cachee. Ver `ProviderArgs.cachePrefix`.
+   */
+  cachePrefix?: string
   /** Recent conversation turns, oldest first. */
   messages: ChatMessage[]
 }
@@ -23,12 +28,13 @@ export interface GenerateArgs {
  * of the raw text. Throws `AiError` on any provider/network failure.
  */
 export async function generateReply(args: GenerateArgs): Promise<GenerateResult> {
-  const { config, systemPrompt, messages } = args
+  const { config, systemPrompt, cachePrefix, messages } = args
   const timeoutMs = aiRequestTimeoutMs()
   const providerArgs = {
     apiKey: config.apiKey,
     model: config.model,
     systemPrompt,
+    cachePrefix,
     messages,
     timeoutMs,
   }

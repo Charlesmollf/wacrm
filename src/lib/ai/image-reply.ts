@@ -153,8 +153,11 @@ export async function dispatchInboundImageToAiReply(
       // best-effort
     }
 
-    const system =
-      `${config.systemPrompt}${customerContext}${orderContext}\n\n` +
+    // PREFIJO ESTABLE (se cachea): persona + la instruccion de imagen +
+    // las reglas de extraccion. Lo volatil (ficha del cliente y pedido)
+    // va DESPUES, o el cache no acertaria nunca.
+    const stableSystem =
+      `${config.systemPrompt}\n\n` +
       (postSale
         ? `[INSTRUCCIÓN ESPECIAL — CLIENTE CON PEDIDO YA PAGADO] Este cliente YA ` +
           `compró y su pedido está pagado/en camino. Una foto suya casi siempre es ` +
@@ -178,6 +181,9 @@ export async function dispatchInboundImageToAiReply(
           `hilo que venían hablando.`) +
       ` Responde en español, breve y cálido, sin inventar precios.\n\n` +
       DEAL_EXTRACTION_INSTRUCTIONS
+
+    const volatileSystem = `${customerContext}${orderContext}`
+    const system = `${stableSystem}${volatileSystem}`
 
     const userText = caption
       ? `El cliente envió esta imagen y escribió: "${caption}"`
@@ -220,11 +226,24 @@ export async function dispatchInboundImageToAiReply(
         headers: {
           'x-api-key': config.apiKey,
           'anthropic-version': ANTHROPIC_VERSION,
+          'anthropic-beta': 'extended-cache-ttl-2025-04-11',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           model: config.model,
-          system,
+          system:
+            stableSystem.length >= 4000
+              ? [
+                  {
+                    type: 'text',
+                    text: stableSystem,
+                    cache_control: { type: 'ephemeral', ttl: '1h' },
+                  },
+                  ...(volatileSystem.trim()
+                    ? [{ type: 'text', text: volatileSystem }]
+                    : []),
+                ]
+              : system,
           max_tokens: 1024,
           messages: [
             ...priorMsgs,
@@ -257,7 +276,19 @@ export async function dispatchInboundImageToAiReply(
       }
       const data = (await res.json().catch(() => null)) as {
         content?: { type?: string; text?: string }[]
+        usage?: {
+          input_tokens?: number
+          cache_creation_input_tokens?: number
+          cache_read_input_tokens?: number
+          output_tokens?: number
+        }
       } | null
+      const u = data?.usage
+      console.log(
+        `[anthropic cache][vision] creation=${u?.cache_creation_input_tokens ?? 0} ` +
+          `read=${u?.cache_read_input_tokens ?? 0} fresh=${u?.input_tokens ?? 0} ` +
+          `output=${u?.output_tokens ?? 0}`,
+      )
       text = (data?.content ?? [])
         .filter((b) => b.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text)

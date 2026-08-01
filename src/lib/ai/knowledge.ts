@@ -147,3 +147,50 @@ export async function retrieveKnowledge(
 
   return Array.from(picked.values()).slice(0, k)
 }
+
+/**
+ * Devuelve la base de conocimiento COMPLETA, siempre en el mismo orden.
+ *
+ * `retrieveKnowledge` busca por palabras clave, asi que devuelve
+ * fragmentos DISTINTOS segun lo que pregunte el cliente. Eso rompia el
+ * cache de Anthropic: el prefijo del prompt tiene que ser identico byte
+ * por byte entre llamadas, y ahi cambiaba en cada mensaje.
+ *
+ * Nuestra base es chica (una decena de fragmentos), asi que mandarla
+ * entera sale mas barato que buscar: entra al bloque cacheado, se cobra
+ * completa una sola vez, y de paso el bot deja de depender de que la
+ * busqueda por palabras acierte (fue justo lo que fallo cuando no supo
+ * que Procesos Secretos trae opcion de prensa francesa).
+ *
+ * El orden por (document_id, chunk_index) es determinista a proposito.
+ */
+export async function retrieveAllKnowledge(
+  db: SupabaseClient,
+  accountId: string,
+  maxChars = 20000,
+): Promise<string[]> {
+  try {
+    const { data, error } = await db
+      .from('ai_knowledge_chunks')
+      .select('content, document_id, chunk_index')
+      .eq('account_id', accountId)
+      .order('document_id', { ascending: true })
+      .order('chunk_index', { ascending: true })
+      .limit(200)
+    if (error || !data) return []
+
+    const out: string[] = []
+    let total = 0
+    for (const row of data as { content?: string }[]) {
+      const texto = String(row.content ?? '').trim()
+      if (!texto) continue
+      if (total + texto.length > maxChars) break
+      out.push(texto)
+      total += texto.length
+    }
+    return out
+  } catch (err) {
+    console.error('[ai knowledge] no se pudo cargar la base completa:', err)
+    return []
+  }
+}
