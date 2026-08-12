@@ -14,8 +14,7 @@ Variedades casi extintas, tostado semanal. Tienda: https://kaffeejager.shop · V
 
 ## 2. Precios
 
-**Todos los precios de esta sección son SIN ENV�MO.**
-
+**Todos los precios de esta sección son SIN ENVÍO.**
 ### Bolsas de 400 gr
 
 | Precio | Variedades |
