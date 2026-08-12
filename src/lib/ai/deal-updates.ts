@@ -27,17 +27,39 @@ import { syncPaymentTag } from '@/lib/crm/payment-tags'
  *  agent's voice. Kept here so the prompt and the parser stay in sync. */
 export const DEAL_EXTRACTION_INSTRUCTIONS =
   'EXTRACCION DE DATOS (INVISIBLE): Cuando en la conversacion el cliente indique o tu confirmes cualquiera de estos datos, agrega al FINAL del mensaje UNA sola marca con este formato EXACTO: ' +
-  '[[SET: forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...; notas=...]]. ' +
+  '[[SET: nombre=...; forma_pago=...; estado_pago=...; molienda=...; combo=...; direccion=...; nit=...; notas=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido | Mixto (usa Mixto SOLO cuando en un mismo pedido unos productos van en grano y otros molidos; en ese caso escribe la molienda de cada producto entre parentesis dentro de combo, ej. combo=Maracaturra (grano), Maragogipe (molido)); ' +
   'combo = la lista COMPLETA Y ACTUAL de productos del pedido, no uno solo. Si el pedido lleva varios productos escribelos juntos separados por " + " (ej. combo=Mitico Coban + Africa Mia). Si el cliente CAMBIA de producto (se arrepiente y pide otro), manda SOLO el producto nuevo: el sistema reemplaza el anterior, no lo suma. direccion = direccion de entrega exacta; nit = NIT para factura; notas = nota o instruccion especial del pedido, sobre todo REGALOS (formato: Regalo para [destinatario], de parte de [comprador]); ' +
   'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. Si el cliente solo MODIFICA o REAFIRMA el MISMO pedido (corrige la molienda, aclara un producto, repite lo ya pedido) NO es venta nueva: reenvia el combo corregido pero NO incluyas total; el sistema actualiza el pedido en vez de duplicarlo. ' +
   'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. En pedidos CONTRA ENTREGA no hay comprobante: cuando el cliente confirma la compra (envias total y forma_pago=Contra entrega) el sistema lo manda solo a la cola de confirmacion para que el equipo lo prepare. ' +
+  'nombre = nombre y apellido REAL del cliente, tal como el lo escribio. En cuanto te lo diga, incluyelo. ' +
+  'REGLA DEL NOMBRE: NO puedes cerrar un pedido sin el nombre del cliente. Si vas a confirmar la compra y todavia no sabes como se llama, PIDESELO en esa misma linea ' +
+  '(ej. "Perfecto 😊 ¿A nombre de quien preparo el pedido?") y no mandes total hasta tenerlo. El nombre del perfil de WhatsApp NO cuenta como nombre confirmado. ' +
+  'REGLA DEL ENVIO (critica): los precios del catalogo son SIN ENVIO. TODO pedido paga Q45 de envio, uno solo por pedido. El total que le das al cliente y el que mandas en total= ' +
+  'SIEMPRE es precio del cafe + Q45. Ejemplos: Africa Mia con cafetera italiana Q545 -> total=590. Africa Mia sola Q400 -> total=445. Mitico Coban Q345 -> total=390. Una bolsa de Q120 -> total=165. ' +
+  'Nunca des como total el precio pelado del catalogo: si el numero que ibas a decir aparece tal cual en el catalogo, te falto sumar el envio. ' +
   'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
 
 const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
 
+/** Rellenos que el sistema pone solo y que NO son el nombre de nadie. */
+const NOMBRES_DE_RELLENO = ['lead whatsapp', 'cliente', 'sin nombre', 'contacto', '.', '..', '...']
+
+/** ¿Sirve este nombre para rotular una guia de envio? */
+function esNombreUsable(nombre: string, telefono: string): boolean {
+  const n = (nombre || '').trim()
+  if (n.length < 3) return false
+  if (n === telefono) return false
+  if (NOMBRES_DE_RELLENO.includes(n.toLowerCase())) return false
+  // Puro numero (el telefono con o sin formato) no es un nombre.
+  if (!/[a-zá-úñ]{3}/i.test(n)) return false
+  return true
+}
+
 export interface DealUpdates {
+  /** Nombre real del cliente, dicho por el en el chat. */
+  nombre?: string
   payment_method?: string
   payment_status?: string
   grind?: string
@@ -92,6 +114,9 @@ export function extractDealMarkers(text: string): ExtractedDealData {
       const val = pair.slice(eq + 1).trim()
       if (!val) continue
       switch (key) {
+        case 'nombre':
+          updates.nombre = val
+          break
         case 'forma_pago':
           updates.payment_method = mapPaymentMethod(val)
           break
@@ -149,8 +174,49 @@ export async function applyDealUpdates(
       updates.nit ||
       updates.notes ||
       updates.combo ||
-      updates.total
+      updates.total ||
+      updates.nombre
     if (!hasField) return
+
+    // --- NOMBRE DEL CLIENTE ---------------------------------------
+    // Cuando el cliente dice como se llama hay que guardarlo en su ficha;
+    // antes se perdia y habia que escribirlo a mano.
+    //
+    // OJO con dos cosas distintas:
+    //  • Para ESCRIBIR respetamos el mismo candado del webhook: si el
+    //    equipo ya renombro la tarjeta a mano, ese nombre manda.
+    //  • Para el CANDADO de la cola de confirmacion basta con que haya un
+    //    nombre utilizable para la guia de envio. El nombre del perfil de
+    //    WhatsApp SI sirve; lo que no sirve es un vacio, el propio numero
+    //    o un relleno tipo "Lead WhatsApp".
+    let nombreUtilizable = ''
+    try {
+      const { data: cont } = await db
+        .from('contacts')
+        .select('name, phone, wa_profile_name')
+        .eq('id', contactId)
+        .maybeSingle()
+      const actual = String(cont?.name ?? '').trim()
+      const perfil = String(cont?.wa_profile_name ?? '').trim()
+      const telefono = String(cont?.phone ?? '').trim()
+
+      if (updates.nombre) {
+        const editadoAMano = !!actual && actual !== perfil && actual !== telefono
+        const limpio = updates.nombre.trim().slice(0, 80)
+        if (limpio && !editadoAMano && limpio !== actual) {
+          await db
+            .from('contacts')
+            .update({ name: limpio, updated_at: new Date().toISOString() })
+            .eq('id', contactId)
+          nombreUtilizable = limpio
+        }
+      }
+      if (!nombreUtilizable) nombreUtilizable = esNombreUsable(actual, telefono) ? actual : ''
+    } catch (e) {
+      console.error('[deal-updates] no se pudo guardar el nombre:', e)
+      // Ante la duda no bloqueamos la venta.
+      nombreUtilizable = 'desconocido'
+    }
 
     // Most recent deal for this contact in the account — that's the one
     // the current conversation is about.
@@ -249,6 +315,18 @@ export async function applyDealUpdates(
       // contra entrega CONFIRMADO (con total) siempre va a "Por confirmar",
       // salvo que ya venga como Pagado o Por confirmar.
       patch.payment_status = 'Por confirmar'
+    }
+
+    // CANDADO: sin nombre del cliente el pedido NO entra a la cola de
+    // confirmacion. Sin nombre no se puede rotular la guia de Cargo
+    // Expreso y el equipo terminaba persiguiendo el dato despues de que
+    // el pedido ya estaba "listo". Se queda en Pendiente; el bot tiene
+    // instruccion de pedir el nombre antes de cerrar (REGLA DEL NOMBRE).
+    if (patch.payment_status === 'Por confirmar' && !nombreUtilizable) {
+      console.warn(
+        `[deal-updates] deal ${deal.id}: sin nombre de cliente, se queda en Pendiente en vez de entrar a Confirmar pagos`,
+      )
+      patch.payment_status = 'Pendiente'
     }
 
     // Never drag an already-PAID order back into the confirmation queue
