@@ -1,93 +1,94 @@
-# MANUAL OFICIAL — Kaffeejager Roastery
+# MANUAL — Kaffeejager Roastery
 
-> **Fuente de verdad del catálogo y las políticas de venta.**
-> Última actualización: 31-07-2026 · Verificado contra la tienda Shopify (kaffeejager.shop).
-> Cuando cambie un precio o producto, se actualiza AQUÍ primero y luego se refleja en el
-> prompt del bot (`ai_configs.system_prompt`) y en la base de conocimiento
-> (`ai_knowledge_documents`).
+> Verdad única del **negocio**: catálogo, precios y reglas de venta.
+> Lo técnico (código, base de datos, deploy) va en `CLAUDE.md`.
+> Última verificación contra Shopify: 12-08-2026.
+>
+> Al cambiar algo aquí, reflejarlo también en:
+> `ai_configs.system_prompt` (bloque `=== CATALOGO OFICIAL`) y en `ai_knowledge_chunks` (chunks 10 y 11).
 
-## 1. El negocio
+## 1. Negocio
 
-- **Kaffeejager Roastery** — tostaduría familiar, 5 generaciones produciendo café desde 1913.
-- Finca Santa Elisa, **Cobán, Alta Verapaz, Guatemala**.
-- Rescatamos variedades casi extintas. Café **recién tostado** cada semana.
-- Web: **https://kaffeejager.shop** (sí tenemos tienda en línea).
-- Venta principal por **WhatsApp**.
+Tostaduría familiar, 5 generaciones desde 1913. Finca Santa Elisa, Cobán, Alta Verapaz.
+Variedades casi extintas, tostado semanal. Tienda: https://kaffeejager.shop · Venta principal por WhatsApp.
 
-## 2. Variedades individuales — bolsa de 400 gr
+## 2. Precios
 
-| Variedad | Precio | Notas de sabor |
-|---|---|---|
-| Bourbon | Q120 | clásico, equilibrado |
-| Catuaí | Q120 | suave, dulce |
-| Caturra Roja | Q120 | variedad escasa, fina |
-| Pacamara | Q120 | grano grande, dulce, notas a miel |
-| Maracaturra | Q120 | grano grande, exótico |
-| Maragogipe | Q120 | grano gigante, raro y único |
-| Peaberry (Caracolillo) | Q120 | almendra, chocolate, caramelo |
-| Anaeróbico | Q120 | proceso sin oxígeno: ciruela pasa, fresa, chocolate |
-| **Gesha** (premium) | **Q200** | floral, complejo, la "reina" |
-| **Kenia SL28** (premium) | **Q200** | cuerno de África, intenso |
-| **Café con Cardamomo** | **Q120** | SOLO MOLIDO. Caturra + Bourbon + 5% cardamomo. Dulce, a caramelo |
+**Todos los precios de esta sección son SIN ENV�MO.**
 
-## 3. Combos — todos en GRANO o MOLIDO (mismo precio), todos con caja de regalo
+### Bolsas de 400 gr
 
-| Combo | Contenido | Sin artículo | + Prensa Francesa | + Cafetera Italiana (Moka) |
+| Precio | Variedades |
+|---|---|
+| Q120 | Bourbon · Catuaí · Caturra Roja · Pacamara · Maracaturra · Maragogipe · Peaberry (Caracolillo) · Anaeróbico |
+| Q120 | Café con Cardamomo — **solo molido** |
+| Q200 | Gesha · Kenia SL28 (premium) |
+
+### Combos (grano o molido al mismo precio, todos con caja de regalo)
+
+| Combo | Contenido | Solo | + Prensa | + Cafetera |
 |---|---|---|---|---|
-| **Colosos de América** | Pacamara + Maracaturra + Maragogipe | Q345 | Q445 | Q545 |
-| **Intensa Dulzura** | Pacamara + Catuaí + Anaeróbico | Q345 | Q445 | Q545 |
-| **Mítico Cobán** | Bourbon + Catuaí + Caturra Roja | Q345 | Q445 | Q545 |
-| **África Mía** (premium) | Gesha + Kenia SL28 | Q400 | Q500 | Q545 ⭐ |
-| **Procesos Secretos** | Anaeróbico + Peaberry (Caracolillo) | Q240 | **Q260** ⭐ | Q440 |
-| **Combo #4 Highland Cobán** | 4 variedades autóctonas de la región | Q220 | Q320 | Q440 |
+| Colosos de América | Pacamara + Maracaturra + Maragogipe | Q345 | Q445 | Q545 |
+| Intensa Dulzura | Pacamara + Catuaí + Anaeróbico | Q345 | Q445 | Q545 |
+| Mítico Cobán | Bourbon + Catuaí + Caturra Roja | Q345 | Q445 | Q545 |
+| África Mía | Gesha + Kenia SL28 | Q400 | Q500 | Q545 ⭐ |
+| Procesos Secretos | Anaeróbico + Peaberry | Q240 | **Q260** ⭐ | Q440 |
+| Combo #4 Highland Cobán | 4 variedades de la región | Q220 | Q320 | Q440 |
 
-⭐ **Dos gangas que SIEMPRE hay que mencionar:**
+⭐ Las dos gangas que siempre hay que mencionar: **Procesos Secretos + prensa por solo +Q20**
+(normalmente cuesta Q100) y **África Mía + cafetera en Q545**.
 
-- **Procesos Secretos + Prensa Francesa = Q260** → la prensa sale en **solo +Q20** (normalmente cuesta Q100).
-- **África Mía + Cafetera Italiana = Q545** → precio especial, la cafetera va prácticamente incluida.
+### Accesorios (nunca se venden solos)
 
-## 4. Accesorios (nunca se venden solos, siempre con café)
+- Prensa Francesa **+Q100** · excepción: Procesos Secretos **+Q20**
+- Cafetera Italiana (Moka) **+Q200** · excepción: África Mía queda en Q545
+- La cafetera **nunca** cuesta Q100 — ese es el precio de la prensa
 
-- **Prensa Francesa: +Q100** sobre el precio del café.
-  *Excepción:* en **Procesos Secretos** es solo **+Q20**.
-- **Cafetera Italiana (Moka): +Q200** sobre el precio del café.
-  *Excepción:* **África Mía** queda en Q545 con cafetera (precio especial).
-- La cafetera italiana **NUNCA** cuesta Q100 — Q100 es el precio de la prensa francesa.
+## 3. ⚠️ Envío y totales — la regla que más se rompe
 
-**Ejemplos de cálculo:**
+**Q45 a toda Guatemala. UN SOLO envío por pedido**, sin importar cuántos productos lleve.
+Entrega en 24–48 horas hábiles con Cargo Expreso.
 
-- 1 Bourbon Q120 + cafetera italiana Q200 = Q320 + envío Q45 = **Q365**
-- 1 Pacamara Q120 + prensa francesa Q100 = Q220 + envío Q45 = **Q265**
-- 1 Bourbon Q120 + 1 Kenia SL28 Q200 = Q320 + cafetera Q200 = Q520 + envío Q45 = **Q565**
+> **Total = precio del café + Q45. Siempre.**
+> Antes de decir un total, revisar: si ese número aparece tal cual en la tabla de arriba,
+> **faltó sumar el envío**.
 
-## 5. Envío
+| Pedido | Café | Total real |
+|---|---|---|
+| África Mía con cafetera italiana | Q545 | **Q590** |
+| África Mía sola | Q400 | **Q445** |
+| Mítico Cobán | Q345 | **Q390** |
+| Procesos Secretos con prensa | Q260 | **Q305** |
+| Una bolsa de 400 gr | Q120 | **Q165** |
 
-- **Q45 a toda Guatemala**, con Cargo Expreso. **Un solo envío por pedido**, sin importar cuántos productos lleve.
-- Entrega en **24–48 horas hábiles**.
+Al cliente se le desglosa: *"Q545 + Q45 de envío = Q590"*.
 
-## 6. Formas de pago
+## 4. Pago
 
-1. **Link de pago** (solo tarjetas VISA): https://sp.pagalo.co/kaffeejager-roastery
-2. **Transferencia bancaria — ÚNICA CUENTA QUE EXISTE:**
-   - Banco: **BAM (Banco Agromercantil)**
-   - **Cuenta Monetaria: 30-3093873-2**
-   - A nombre de: **Kaffeejager Roastery**
-   - 🚫 **PROHIBIDO dar cualquier otro número de cuenta.** Jamás inventar, adivinar ni completar.
-3. **Contra entrega**.
+1. **Link de pago** (solo VISA): https://sp.pagalo.co/kaffeejager-roastery
+2. **Transferencia — ÚNICA CUENTA QUE EXISTE:**
+   BAM (Banco Agromercantil) · **Cuenta Monetaria 30-3093873-2** · Kaffeejager Roastery
+   🚫 Prohibido dar cualquier otro número. Jamás inventar ni completar.
+3. **Contra entrega**
 
-Tras el pago, el cliente debe **enviar el comprobante** para confirmar y despachar.
+Tras pagar, el cliente manda el comprobante. El pago lo confirma **una persona**, nunca el bot.
 
-## 7. Datos que se piden para un pedido
+## 5. Datos del pedido
 
-Nombre · Teléfono · Correo electrónico · Dirección exacta de entrega · Grano o molido · NIT (si quiere factura).
+**Nombre** · Teléfono · Correo · Dirección exacta · Grano o molido · NIT (si quiere factura)
 
-> **Importante:** si el cliente ya está en la base (cartera importada), esos datos **ya los tenemos**.
-> No pedirlos de cero: **confirmarlos** ("¿Se lo enviamos a [dirección] como la vez pasada?").
+- **El nombre es obligatorio**: sin él no se puede rotular la guía de Cargo Expreso, así que
+  ningún pedido entra a "Confirmar pagos" sin nombre. Si falta, se pide antes de cerrar.
+- Si el cliente ya está en la cartera, esos datos **ya los tenemos**: se **confirman**, no se piden
+  de cero.
 
-## 8. Reglas de oro al vender
+## 6. Reglas de oro al vender
 
-1. Cuando pregunten **"¿qué incluye?"**, decir el contenido **y** las opciones con accesorio y su precio.
-2. Nunca inventar precios, productos ni números de cuenta. Si no está en este manual, no existe.
-3. Un cliente que ya compró y manda fotos = **seguimiento post-venta**, no se le vuelve a vender.
-4. Si el cliente pregunta por su pedido días después, es el **mismo pedido**: no crear uno nuevo.
-5. Ante cualquier duda, **preguntar** antes de asumir.
+1. Cada dato que da el cliente se guarda en su ficha; **no se le repite de vuelta**.
+2. Respuestas de una o dos líneas pidiendo solo lo que falta. El resumen completo va **una sola vez**,
+   al cerrar, antes de preguntar la forma de pago.
+3. Al preguntar "¿qué incluye?": contenido **y** las tres opciones con su precio.
+4. Nunca inventar precios, productos ni cuentas. Si no está en este manual, no existe.
+5. Cliente que ya compró y manda fotos = **seguimiento post-venta**, no se le vuelve a vender.
+6. Pregunta por un pedido días después = **el mismo pedido**, no uno nuevo.
+7. Ante la duda, preguntar antes de asumir.
