@@ -76,12 +76,19 @@ function buildOrderSummary(deal: Deal): string {
   const nit = deal.nit?.trim() || "—";
   const nota = ((deal as { notes?: string | null }).notes || "").trim();
 
+  // En CONTRA ENTREGA el dinero todavia no entra: lo cobra el repartidor.
+  // La tarjeta decia "PAGADO ✅" siempre y arriba "Pago: Contra entrega",
+  // dos cosas que se contradicen y confundian a la tostaduria. Para contra
+  // entrega se omite la palabra; para link y transferencia se mantiene,
+  // porque ahi el pago si esta confirmado antes de despachar.
+  const esContraEntrega = /contra\s*entrega/i.test(pago);
+
   return [
     "🔥 NUEVO PEDIDO CONFIRMADO",
     `👤 Cliente: ${name}${phone ? ` (${phone})` : ""}`,
     `☕ Producto: ${producto}`,
     `⚙️ Molienda: ${molienda}`,
-    `💵 Total: ${total} — PAGADO ✅`,
+    esContraEntrega ? `💵 Total: ${total}` : `💵 Total: ${total} — PAGADO ✅`,
     `💳 Pago: ${pago}`,
     `📍 Dirección: ${direccion}`,
     `🧾 NIT: ${nit}`,
