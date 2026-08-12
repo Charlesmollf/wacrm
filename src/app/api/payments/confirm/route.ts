@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth/account'
 import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { reportPurchaseForDeal } from '@/lib/meta/report-purchase'
 import { syncPaymentTag } from '@/lib/crm/payment-tags'
+import { pushOrderToSheet } from '@/lib/sheets/push-order'
 
 /**
  * POST /api/payments/confirm  (agent+)
@@ -33,7 +34,9 @@ export async function POST(request: Request) {
     // RLS scopes this to the caller's account — a missing row is "not yours".
     const { data: deal, error: dealErr } = await supabase
       .from('deals')
-      .select('id, value, currency, contact_id, conversation_id, pipeline_id, sold_at, updated_at')
+      .select(
+        'id, value, currency, contact_id, conversation_id, pipeline_id, payment_method, grind, address, nit, notes, combo_history, sold_at, updated_at',
+      )
       .eq('id', dealId)
       .maybeSingle()
     if (dealErr) {
@@ -97,7 +100,24 @@ export async function POST(request: Request) {
     // picked up automatically by the daily reconciler.
     const capi = await reportPurchaseForDeal(supabaseAdmin(), accountId, deal)
 
-    return NextResponse.json({ ok: true, capi })
+    // Y a la hoja de la tostaduria. Corre en el servidor, asi que el
+    // pedido aparece aunque la computadora del duenio este apagada.
+    // Best-effort: un fallo aqui no invalida el pago ya confirmado.
+    const hoja = await pushOrderToSheet(supabaseAdmin(), accountId, {
+      id: deal.id,
+      value: deal.value,
+      payment_method: (deal as { payment_method?: string | null }).payment_method ?? null,
+      grind: (deal as { grind?: string | null }).grind ?? null,
+      address: (deal as { address?: string | null }).address ?? null,
+      nit: (deal as { nit?: string | null }).nit ?? null,
+      notes: (deal as { notes?: string | null }).notes ?? null,
+      combo_history: (deal as { combo_history?: string | null }).combo_history ?? null,
+      sold_at: (deal as { sold_at?: string | null }).sold_at ?? null,
+      updated_at: (deal as { updated_at?: string | null }).updated_at ?? null,
+      contact_id: deal.contact_id,
+    })
+
+    return NextResponse.json({ ok: true, capi, hoja })
   } catch (err) {
     const status =
       err && typeof err === 'object' && 'status' in err
