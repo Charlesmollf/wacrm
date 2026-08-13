@@ -537,7 +537,7 @@ export default function PipelinesPage() {
           {/* Search + tag/payment filter */}
           <div className="space-y-2">
             <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center px-3 sm:static sm:justify-start sm:gap-2 sm:px-0">
-              <div className="flex items-center gap-1 rounded-full border border-border bg-card/95 p-1.5 shadow-2xl backdrop-blur sm:contents">
+              <div className="flex items-center gap-1 rounded-full border border-border bg-card p-1.5 shadow-lg sm:contents">
                 {/* Embudos: en movil vive aca; en escritorio arriba. */}
                 <DropdownMenu>
                   <DropdownMenuTrigger
