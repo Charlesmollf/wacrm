@@ -29,7 +29,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings, Search, Filter, X } from "lucide-react";
+import { GitBranch, Plus, ChevronDown, Settings, Search, Filter, X, Menu } from "lucide-react";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
@@ -438,7 +438,7 @@ export default function PipelinesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="hidden flex-wrap items-center justify-between gap-3 sm:flex">
         <div className="flex items-center gap-3">
           {/* Pipeline selector dropdown */}
           <DropdownMenu>
@@ -536,14 +536,53 @@ export default function PipelinesPage() {
         <>
           {/* Search + tag/payment filter */}
           <div className="space-y-2">
-            <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background/95 px-3 py-2 backdrop-blur sm:static sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
-              <div className="relative w-11 max-w-sm shrink-0 transition-[width] duration-200 focus-within:w-full sm:w-full sm:shrink">
+            <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center px-3 sm:static sm:justify-start sm:gap-2 sm:px-0">
+              <div className="flex items-center gap-1 rounded-full border border-border bg-card/95 p-1.5 shadow-2xl backdrop-blur sm:contents">
+                {/* Embudos: en movil vive aca; en escritorio arriba. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label="Embudos"
+                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted sm:hidden"
+                  >
+                    <Menu className="size-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="center"
+                    className="w-56 border-border bg-popover text-popover-foreground"
+                  >
+                    {pipelines.map((p) => (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onClick={() => setSelectedPipelineId(p.id)}
+                        className={
+                          p.id === selectedPipelineId
+                            ? "text-primary"
+                            : "text-popover-foreground"
+                        }
+                      >
+                        <GitBranch className="mr-2 h-3.5 w-3.5" />
+                        {p.name}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator className="bg-border" />
+                    {selectedPipeline && (
+                      <DropdownMenuItem
+                        onClick={() => setSettingsOpen(true)}
+                        className="text-popover-foreground"
+                      >
+                        <Settings className="mr-2 h-3.5 w-3.5" />
+                        {t("managePipelines")}
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              <div className="relative w-9 shrink-0 transition-[width] duration-200 focus-within:w-48 sm:w-full sm:max-w-sm sm:shrink">
                 <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Buscar por nombre, teléfono o email..."
-                  className="border-border bg-card pl-8 text-foreground placeholder:text-muted-foreground"
+                  className="rounded-full border-border bg-card pl-8 text-foreground placeholder:text-muted-foreground sm:rounded-md"
                 />
               </div>
 
@@ -552,7 +591,7 @@ export default function PipelinesPage() {
                   render={
                     <Button
                       variant="outline"
-                      className="shrink-0 border-border text-muted-foreground hover:bg-muted"
+                      className="size-9 shrink-0 rounded-full border-border p-0 text-muted-foreground hover:bg-muted sm:size-auto sm:rounded-md sm:px-3"
                     />
                   }
                 >
@@ -634,6 +673,7 @@ export default function PipelinesPage() {
                   </div>
                 </PopoverContent>
               </Popover>
+            </div>
             </div>
 
             {activeFilterCount > 0 && (
