@@ -6,7 +6,6 @@ import type { Pipeline, PipelineStage, Deal, Tag } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
 import { PipelineSettings } from "@/components/pipelines/pipeline-settings";
 import { DealForm } from "@/components/pipelines/deal-form";
-import { PipelineAnalytics } from "@/components/pipelines/pipeline-analytics";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -683,7 +682,6 @@ export default function PipelinesPage() {
             )}
           </div>
 
-          <PipelineAnalytics stages={stages} deals={filteredDeals} />
           <PipelineBoard
             stages={stages}
             deals={filteredDeals}
