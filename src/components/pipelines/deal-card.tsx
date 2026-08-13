@@ -109,13 +109,13 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
           </span>
         )}
         {deal.status === "won" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
+          <span className="hidden shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary sm:inline-flex">
             <Check className="h-3 w-3" />
             {t("won")}
           </span>
         )}
         {deal.status === "lost" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+          <span className="hidden shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400 sm:inline-flex">
             <X className="h-3 w-3" />
             {t("lost")}
           </span>
@@ -178,7 +178,7 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
       )}
 
       {deal.contact?.tags && deal.contact.tags.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 hidden flex-wrap items-center gap-1.5 sm:flex">
           {deal.contact.tags.map((tag) => (
             <span
               key={tag.id}
