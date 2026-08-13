@@ -494,7 +494,7 @@ export default function PipelinesPage() {
             canAct={canEditSettings}
             gateReason="create pipelines"
             onClick={() => setNewPipelineOpen(true)}
-            className="border-border bg-card text-foreground hover:bg-muted"
+            className="hidden border-border bg-card text-foreground hover:bg-muted sm:inline-flex"
           >
             <Plus className="mr-1 h-4 w-4" />
             {t("addPipeline")}
@@ -504,7 +504,7 @@ export default function PipelinesPage() {
             gateReason="create deals"
             disabled={!selectedPipelineId || stages.length === 0}
             onClick={() => handleAddDeal()}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
+            className="hidden bg-primary text-primary-foreground hover:bg-primary/90 sm:inline-flex"
           >
             <Plus className="mr-1 h-4 w-4" />
             {t("addDeal")}
@@ -536,8 +536,8 @@ export default function PipelinesPage() {
         <>
           {/* Search + tag/payment filter */}
           <div className="space-y-2">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative w-full max-w-sm">
+            <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-2 border-t border-border bg-background/95 px-3 py-2 backdrop-blur sm:static sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+              <div className="relative w-11 max-w-sm shrink-0 transition-[width] duration-200 focus-within:w-full sm:w-full sm:shrink">
                 <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={search}
@@ -557,7 +557,7 @@ export default function PipelinesPage() {
                   }
                 >
                   <Filter className="size-4" />
-                  Filtrar por etiquetas
+                  <span className="hidden sm:inline">Filtrar por etiquetas</span>
                   {activeFilterCount > 0 && (
                     <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
                       {activeFilterCount}
