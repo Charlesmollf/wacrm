@@ -5,7 +5,8 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   useDroppable,
@@ -93,8 +94,14 @@ export function PipelineBoard({
     return map;
   }, [sortedStages, deals]);
 
+  // Tacto (iPhone): el arrastre exige mantener el dedo 220 ms. Sin esa
+  // espera dnd-kit se quedaba con el primer movimiento del dedo y la
+  // columna no scrolleaba: solo se movia la tarjeta.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 220, tolerance: 8 },
+    }),
     useSensor(KeyboardSensor),
   );
 
@@ -530,7 +537,15 @@ function DraggableDealCard({
         ref={setNodeRef}
         {...listeners}
         {...attributes}
-        style={{ opacity: isDragging ? 0.3 : 1, touchAction: "none" }}
+        style={{
+          opacity: isDragging ? 0.3 : 1,
+          // `none` bloqueaba el scroll tactil dentro de la columna.
+          // Con el TouchSensor por retardo el navegador puede scrollear
+          // normal y recien despues del long-press manda el arrastre.
+          touchAction: isDragging ? "none" : "auto",
+          WebkitTouchCallout: "none",
+          userSelect: "none",
+        }}
         className={selected ? "rounded-xl ring-2 ring-primary" : ""}
       >
         <DealCard deal={deal} stage={stage} onEdit={onEdit} />
