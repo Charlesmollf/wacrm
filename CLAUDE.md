@@ -3,7 +3,7 @@
 CRM de WhatsApp (Next.js + Supabase). **El catálogo, los precios y las reglas de venta viven en
 `MANUAL.md`** — no duplicarlos aquí.
 
-- Deploy: push a `main` → Hostinger auto-deploy (~5-10 min) en aqua-gaur-598822.hostingersite.com
+- Deploy: push a main -> Hostinger auto-deploy (~5-10 min) en **crm.kaffeejager.shop**. El dominio viejo aqua-gaur-598822.hostingersite.com ya no existe: Hostinger lo reemplaza, no lo suma.
 - Supabase: `gxugzprqrbtdaligkzld` · migraciones a mano en el SQL editor
 - GitHub Actions deshabilitado a propósito (el reloj real es pg_cron, ver §4)
 - **Antes de subir: `npx tsc --noEmit`.** El build de Hostinger sí typechea; esbuild no.
