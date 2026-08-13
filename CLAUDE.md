@@ -77,3 +77,20 @@ Solo L-V 7:00–21:00 GT: difusiones, seguimiento a leads fríos y pasos de auto
 - Shopify contra entrega queda PENDING y el pixel no dispara Purchase; por eso el envío server-side.
 - Meta acepta difusiones y luego capa frecuencia sin error visible.
 - Difusiones grandes: lotes reanudables (`scheduled-broadcast.ts`), no de un tirón.
+
+
+## 8. Hoja de la tostaduria (Google Sheet)
+
+Hoja **Pedidos Kaffeejager** (pestania `Pedidos`): titulo en filas 1-3, encabezados en la 4,
+los pedidos entran **siempre en la fila 5** (el mas nuevo arriba).
+
+- Al marcar **Pagado** en `/payments`, `lib/sheets/push-order.ts` hace POST al Apps Script.
+- La URL y el token viven en `whatsapp_config.sheets_webhook_url` / `sheets_webhook_token`.
+  **No estan en el codigo.**
+- Corre en el servidor (Hostinger): funciona con la Mac apagada.
+- El script deduplica por `deal_id` (columna oculta M) y repone los desplegables
+  (Estado: Pendiente rojo / En proceso amarillo / Enviado verde · Grano o molido).
+- La fecha es la de la **venta** (`sold_at`), no la de la confirmacion.
+- Es best-effort: si la hoja falla el pago igual queda confirmado; la respuesta trae `hoja: {...}`.
+- **Si tocas el Apps Script hay que implementar una version nueva**, si no el `/exec`
+  sigue sirviendo la version vieja.
