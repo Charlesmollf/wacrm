@@ -30,6 +30,13 @@ export const metadata: Metadata = {
     index: false,
     follow: false,
   },
+  // Al agregarlo a la pantalla de inicio del iPhone se abre en modo
+  // app: sin barra de Safari ni los botones de las esquinas.
+  appleWebApp: {
+    capable: true,
+    title: "MonsterCRM",
+    statusBarStyle: "black-translucent",
+  },
   icons: {
     icon: [{ url: "/icon" }],
   },
