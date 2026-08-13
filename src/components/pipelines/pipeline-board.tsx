@@ -241,7 +241,7 @@ export function PipelineBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-              <div className="pipeline-scroll flex h-[calc(100dvh-16rem)] min-h-[420px] snap-x snap-mandatory items-stretch gap-3 overflow-x-auto pb-4 lg:snap-none">
+              <div className="pipeline-scroll flex h-[calc(100dvh-11rem)] min-h-[420px] snap-x snap-mandatory items-stretch gap-3 overflow-x-auto pb-16 sm:h-[calc(100dvh-16rem)] sm:pb-4 lg:snap-none">
         {sortedStages.map((stage) => {
           const stageDeals = dealsByStage.get(stage.id) ?? [];
           const totalValue = stageDeals.reduce(
