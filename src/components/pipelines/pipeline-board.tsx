@@ -234,7 +234,7 @@ export function PipelineBoard({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="pipeline-scroll flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 lg:snap-none">
+              <div className="pipeline-scroll flex h-[calc(100dvh-16rem)] min-h-[420px] snap-x snap-mandatory items-stretch gap-3 overflow-x-auto pb-4 lg:snap-none">
         {sortedStages.map((stage) => {
           const stageDeals = dealsByStage.get(stage.id) ?? [];
           const totalValue = stageDeals.reduce(
@@ -419,7 +419,7 @@ function StageColumn({
   const someSelected = deals.some((d) => selectedIds.has(d.id));
 
   return (
-    <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
+        <div className="flex h-full w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col overflow-hidden rounded-xl border border-border bg-card/60 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
       <div
         className="-mx-4 -mt-4 h-[3px] rounded-t-xl"
         style={{ backgroundColor: stage.color }}
@@ -455,7 +455,7 @@ function StageColumn({
 
       <div
         ref={setNodeRef}
-        className={`mt-3 flex flex-1 flex-col gap-2 rounded-lg transition-all ${
+                className={`pipeline-col-scroll mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden rounded-lg pr-1 transition-all ${
           isOver
             ? "bg-primary/5 outline outline-2 outline-dashed outline-primary outline-offset-2"
             : ""
