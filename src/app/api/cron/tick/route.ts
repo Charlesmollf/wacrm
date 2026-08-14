@@ -73,6 +73,17 @@ export async function GET(request: Request) {
     console.error('[cron/tick] capi reconcile failed:', e)
   }
 
+  // Las difusiones programadas corren aunque sea fuera del horario
+  // habil: la hora la eligio el duenio a proposito (ej. sabado 8am).
+  // El horario habil frena los mensajes automaticos del bot, no una
+  // difusion agendada a mano.
+  let broadcastsSent = 0
+  try {
+    broadcastsSent = await drainScheduledBroadcasts(admin)
+  } catch (e) {
+    console.error('[cron/tick] scheduled broadcasts failed:', e)
+  }
+
   if (!isBusinessHoursGT()) {
     return NextResponse.json({
       ok: true,
@@ -80,16 +91,8 @@ export async function GET(request: Request) {
       timers,
       capiReconcile,
       processed: 0,
-      broadcastsSent: 0,
+      broadcastsSent,
     })
-  }
-
-  // ---- Envíos a clientes — solo en horario hábil ---------------------
-  let broadcastsSent = 0
-  try {
-    broadcastsSent = await drainScheduledBroadcasts(admin)
-  } catch (e) {
-    console.error('[cron/tick] scheduled broadcasts failed:', e)
   }
 
   let followups: unknown = null
