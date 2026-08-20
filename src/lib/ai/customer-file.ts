@@ -41,7 +41,7 @@ export async function buildCustomerFile(
   const vacio: CustomerFileResult = { context: '', missing: [] }
   try {
     const [{ data: cont }, { data: notes }, { data: deal }] = await Promise.all([
-      db.from('contacts').select('name, phone, email').eq('id', contactId).maybeSingle(),
+      db.from('contacts').select('name, phone, email, wa_profile_name').eq('id', contactId).maybeSingle(),
       db
         // OJO: la columna es `note_text`, NO `content`. Estuvo mal escrita
         // y por eso el historial de Kommo nunca llegaba al modelo.
@@ -68,7 +68,20 @@ export async function buildCustomerFile(
         .pop() ?? ''
 
     const tiene: Record<string, string> = {}
-    if (cont?.name) tiene['nombre'] = String(cont.name)
+    // El nombre del perfil de WhatsApp NO cuenta como nombre confirmado:
+    // la mitad de las veces es un apodo y con ese nombre se rotula la guia
+    // de Cargo Expreso. Se muestra igual, pero sigue contando como faltante
+    // para que el bot lo confirme antes de cerrar.
+    const nombreGuardado = String(cont?.name ?? '').trim()
+    const perfilWa = String(cont?.wa_profile_name ?? '').trim()
+    const soloDigitos = (s: string) => s.replace(/\D/g, '')
+    const nombreConfirmado =
+      nombreGuardado.length > 1 &&
+      nombreGuardado.toLowerCase() !== perfilWa.toLowerCase() &&
+      soloDigitos(nombreGuardado) !== soloDigitos(String(cont?.phone ?? ''))
+    if (nombreConfirmado) tiene['nombre'] = nombreGuardado
+    else if (nombreGuardado)
+      tiene['nombre (SIN CONFIRMAR, es el perfil de WhatsApp)'] = nombreGuardado
     if (cont?.phone) tiene['telefono'] = String(cont.phone)
     if (cont?.email) tiene['correo'] = String(cont.email)
     if (deal?.address) tiene['direccion'] = String(deal.address)
@@ -106,7 +119,10 @@ export async function buildCustomerFile(
       `5. Si despues de eso el cliente cambia o agrega algo, confirma SOLO el cambio y el total nuevo, en una linea.\n` +
       `6. Un dato que ya aparece arriba NO se pide: se CONFIRMA en una linea\n` +
       `   (ej. "¿Se lo enviamos a la misma direccion de la vez pasada?" / "¿Molido como siempre?").\n` +
-      `7. Si el cliente da un dato distinto al que teniamos (direccion, forma de pago, estado), el NUEVO manda: usalo y guardalo.\n`
+      `7. Si el cliente da un dato distinto al que teniamos (direccion, forma de pago, estado), el NUEVO manda: usalo y guardalo.\n` +
+      `8. El NOMBRE es obligatorio para cerrar. Si arriba dice "SIN CONFIRMAR", ese nombre viene del perfil de WhatsApp\n` +
+      `   y NO sirve para rotular la guia de envio: confirmalo en una linea ("¿A nombre de quien preparo el pedido?")\n` +
+      `   ANTES de dar el total. Sin nombre confirmado no mandes el resumen ni cierres el pedido.\n`
 
     return { context, missing: [...missing] }
   } catch {
