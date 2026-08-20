@@ -238,6 +238,14 @@ export async function applyDealUpdates(
     if (updates.nit) patch.nit = updates.nit
     if (updates.notes) patch.notes = updates.notes
 
+    // El titulo de la tarjeta y el nombre del contacto tienen que decir
+    // lo mismo: con uno se rotula la guia de Cargo Expreso y el otro es
+    // el que ve el equipo en el tablero. Verlos distintos ya causo
+    // confusion (tarjeta "Marisol" con contacto "Geogina").
+    if (nombreUtilizable && nombreUtilizable !== 'desconocido') {
+      patch.title = nombreUtilizable
+    }
+
     if (updates.total) {
       const amount = parseFloat(String(updates.total).replace(/[^0-9.]/g, ''))
       if (Number.isFinite(amount) && amount > 0) {
