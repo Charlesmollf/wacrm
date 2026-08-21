@@ -2,6 +2,7 @@
 
 CRM de WhatsApp (Next.js + Supabase). **El catálogo, los precios y las reglas de venta viven en
 `MANUAL.md`** — no duplicarlos aquí.
+**Lo que falta por hacer vive en `PENDIENTES.md`** — al cerrar algo, borrarlo de ahi.
 
 - Deploy: push a main -> Hostinger auto-deploy (~5-10 min) en **crm.kaffeejager.shop**. El dominio viejo aqua-gaur-598822.hostingersite.com ya no existe: Hostinger lo reemplaza, no lo suma.
 - Supabase: `gxugzprqrbtdaligkzld` · migraciones a mano en el SQL editor
