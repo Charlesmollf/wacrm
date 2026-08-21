@@ -16,6 +16,13 @@ export type AiProvider = 'openai' | 'anthropic'
 export interface AiConfig {
   provider: AiProvider
   model: string
+  /**
+   * Modelo para mensajes con IMAGEN (comprobantes de pago). El texto
+   * corre en un modelo barato; leer una captura borrosa es donde ese
+   * modelo se degrada y el error se paga en quetzales. Null = usa
+   * `model`.
+   */
+  visionModel?: string | null
   apiKey: string
   systemPrompt: string | null
   isActive: boolean
