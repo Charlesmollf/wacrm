@@ -230,7 +230,7 @@ export async function dispatchInboundImageToAiReply(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: config.model,
+          model: config.visionModel || config.model,
           system:
             stableSystem.length >= 4000
               ? [
