@@ -5,7 +5,7 @@ import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } from './deal-updates'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
-import { dispatchInboundToAiReply } from './auto-reply'
+import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -326,7 +326,9 @@ export async function dispatchInboundImageToAiReply(
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
     void applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
-    const finalText = enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || ''))
+    const finalText = enforceSuma(
+      enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
+    )
     if (finalText) {
       await engineSendText({
         accountId,
