@@ -281,7 +281,9 @@ export async function dispatchInboundToAiReply(
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso
     // NO se envía nada. Antes el respaldo mandaba el texto crudo y el
     // cliente llegaba a ver la marca interna en su chat.
-    const finalText = enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || ''))
+    const finalText = enforceSuma(
+      enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
+    )
     if (finalText) {
       await engineSendText({
         accountId,
@@ -331,6 +333,51 @@ function stripInternalMarkers(text: string): string {
 
 /** Unica cuenta bancaria real del negocio. */
 const CUENTA_OFICIAL = '30-3093873-2'
+
+/**
+ * Candado anti-error de aritmetica.
+ *
+ * Haiku escribio "Q400 + Q45 de envio = Q390 total". El 390 no salio de
+ * sumar: salio de los EJEMPLOS de este mismo prompt (Mitico Coban Q345 ->
+ * 390). El modelo copio el ejemplo que mas se le parecia. Lo cacho el
+ * cliente, no nosotros.
+ *
+ * Ensenar la suma con ejemplos invita justo a ese error, y ningun modelo
+ * esta libre de el. Asi que aqui no se le pide al modelo que sume bien: se
+ * VERIFICA. Si el mensaje dice "a + b = c" y c no es a+b, se corrige c
+ * antes de enviarlo.
+ *
+ * Solo toca el resultado de una suma explicita. Un precio suelto, un
+ * telefono o una fecha nunca entran: no tienen la forma "n + n = n".
+ */
+export function enforceSuma(text: string): string {
+  const SUMA =
+    /((?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?(?:\s*\+\s*(?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?)+)([^=\n]{0,30}?)(=\s*Q?\s*)(\d{1,6}(?:[.,]\d{1,2})?)/g
+
+  return text.replace(
+    SUMA,
+    (completo, sumandos: string, medio: string, igual: string, dicho: string) => {
+      const aNumero = (t: string) =>
+        Number(t.replace(/[^\d.,]/g, '').replace(',', '.'))
+      const partes = (sumandos.match(/\d{1,6}(?:[.,]\d{1,2})?/g) ?? []).map(aNumero)
+      if (partes.length < 2 || partes.some((n) => !Number.isFinite(n))) return completo
+
+      const esperado = partes.reduce((a, b) => a + b, 0)
+      const anunciado = aNumero(dicho)
+      if (!Number.isFinite(anunciado) || Math.abs(anunciado - esperado) < 0.01) {
+        return completo
+      }
+
+      const correcto = Number.isInteger(esperado)
+        ? String(esperado)
+        : esperado.toFixed(2)
+      console.warn(
+        `[ai] suma mal hecha, corregida antes de enviar: "${completo.trim()}" -> ${correcto}`,
+      )
+      return `${sumandos}${medio}${igual}${correcto}`
+    },
+  )
+}
 
 /**
  * Candado anti-alucinación de datos bancarios.
