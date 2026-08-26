@@ -119,3 +119,34 @@ update ai_configs set model = 'claude-sonnet-4-5';
   (el CRM no deja filtrar por columna del embudo). Decidir si se borra o se deja.
 - **Resend:** dominio sin verificar.
 - **npm:** 23 vulnerabilidades reportadas.
+
+
+---
+
+## 6. Seguros (MR Seguros)
+
+El negocio de seguros vive en **otra cuenta dentro de este mismo CRM**, no en
+otro sistema. Todo lo suyo está en `MANUAL-SEGUROS.md` — ahí van las fases, el
+estado y el manual de negocio por llenar.
+
+Hecho el 25-08-2026: cuenta creada, 510 contactos y 30 notas migrados, muro
+verificado en las dos direcciones (cada cuenta ve 0 filas de la otra).
+
+Lo que falta, en orden:
+
+1. **Número de WhatsApp propio** — sin él no hay bot de seguros. El webhook
+   enruta por `phone_number_id` y una cuenta no puede usar el número de otra.
+2. **Cerebro del bot** — `ai_configs` de esa cuenta está vacío. Antes hay que
+   llenar la sección 5 de `MANUAL-SEGUROS.md`.
+3. **Etiquetas y embudo propios** — nacen vacíos, no se copian los del café.
+4. **Cotizar en las plataformas de las aseguradoras** — sin decidir cómo.
+5. **Llamadas de voz con IA** — la fase más lejana.
+6. **Correo por puente en el CRM** — decidido que NO se usa conector de Gmail:
+   el correo entra por webhook, se guarda como conversación en la cuenta
+   Seguros y se responde por Resend. Depende de verificar el dominio en Resend
+   (punto 5) y de agregarle un campo de canal a las conversaciones, que hoy
+   asumen WhatsApp.
+
+⚠️ **No proponer de nuevo** un CRM separado con su propia base y dominio, ni un
+embudo de seguros dentro de la cuenta del café. Los dos caminos se evaluaron y
+se descartaron; el porqué está en `MANUAL-SEGUROS.md` sección 2.
