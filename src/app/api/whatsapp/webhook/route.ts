@@ -12,6 +12,7 @@ import { dispatchInboundImageToAiReply } from '@/lib/ai/image-reply'
 import { applyDealUpdates } from '@/lib/ai/deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { archivarMedia } from '@/lib/whatsapp/media-store'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -698,7 +699,7 @@ async function processMessage(
 
   // Parse message content based on type
   const { contentText, mediaUrl, mediaType, interactiveReplyId } =
-    await parseMessageContent(message, accessToken)
+    await parseMessageContent(message, accessToken, accountId)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
   // we just store NULL and the UI renders the message without a quote.
@@ -1093,7 +1094,8 @@ async function fetchCatalogProductNames(
 
 async function parseMessageContent(
   message: WhatsAppMessage,
-  accessToken: string
+  accessToken: string,
+  accountId: string
 ): Promise<{
   contentText: string | null
   mediaUrl: string | null
@@ -1116,6 +1118,12 @@ async function parseMessageContent(
   ): Promise<string | null> => {
     try {
       await getMediaUrl({ mediaId, accessToken })
+      // Nos quedamos con una copia AHORA. Meta borra los archivos a los
+      // ~30 dias; si solo guardamos el id, la imagen se rompe sola y no
+      // hay forma de recuperarla. La ruta que devolvemos no cambia: el
+      // visor sigue pidiendo /api/whatsapp/media/<id>, que ahora lee de
+      // nuestro archivo y solo va a Meta si todavia no lo tenemos.
+      void archivarMedia({ mediaId, accessToken, accountId })
       return `/api/whatsapp/media/${mediaId}`
     } catch (error) {
       console.error(
