@@ -2,9 +2,71 @@
 
 > Lo que falta hacer, ordenado por lo que duele si no se hace.
 > Al cerrar algo, borrarlo de aquí. Si aparece algo nuevo, va aquí y no en el chat.
-> Última actualización: 21-08-2026.
+> Última actualización: 26-08-2026.
+
+## 0. Fase de envíos — DONDE QUEDAMOS (26-08-2026)
+
+El objetivo: que el cliente sepa dónde va su pedido sin preguntar, y que la
+hoja se actualice sola hasta "Entregado".
+
+### Ya está hecho y probado
+
+- **Shopify → CRM → hoja.** Una compra en la tienda crea el contacto y el
+  pedido, y cae en "Confirmar pagos". Al apretar el botón sale a la hoja igual
+  que un pedido de WhatsApp. Sirve para contra entrega y para tarjeta.
+  Probado de punta a punta con el pedido #1162.
+- **Columna No. Guía** en la hoja, al lado del Estado del pedido.
+- **Números de la casa**: la tostaduría y el dueño escriben al número de la
+  API sin que el bot les conteste, sin alerta de "necesita un humano" y sin
+  contar como leads. Tabla `internal_numbers`, 8 números cargados.
+
+### Lo que falta, en orden
+
+**a) Leer el PDF de la guía.** La tostaduría manda al número de la API el PDF
+de cada envío. Hay que sacar el número de guía y el destinatario, emparejarlo
+con su fila y escribir el número en la columna No. Guía.
+Regla: si el PDF no calza con ninguna fila, **dejar el hueco y avisar**. Nunca
+adivinar a quién pertenece una guía.
+*Bloqueado: falta un PDF de muestra para confirmar que el texto se deja leer y
+no es un escaneo.*
+
+**b) Avisarle al cliente.** Cuando una fila diga "Enviado" **y** tenga número
+de guía, mandarle su número y `https://cargoexpreso.com/tracking/`.
+Si el cliente escribió hace menos de 24h va mensaje normal (gratis); si no,
+plantilla de utilidad primero. Un solo aviso por pedido, con el mismo candado
+de `confirm_requested_at`.
+
+**c) La ronda de las 6 de la tarde.** Con Chrome y la Mac abierta, revisar
+todas las guías activas en Cargo Expreso y actualizar la hoja: En tránsito,
+Devolución o Entregado.
+
+### Lo que aprendimos investigando (no repetir el trabajo)
+
+- **Cargo Expreso no tiene API pública.** El rastreo de la web no sirve por
+  URL: `?guia=X` devuelve la página vacía, el resultado lo pinta JavaScript.
+- Detrás hay un endpoint real: `POST https://www.entregoapp.com/api/envio/tracking/`
+  con el campo `guia`. Devuelve `PODStatusDes` (el estado), `RemitenteNombre`,
+  `DestinatarioNombre`, `PODFecha`, `PODHora` y los movimientos.
+  Probado con la guía A417469997-1: devolvió ENTREGADO, Regina Cáceres,
+  25/08 09:25. **No se pudo probar desde el servidor** (el navegador lo bloquea
+  por CORS). Si responde servidor a servidor, la ronda de las 6 no necesita la
+  Mac. Si no responde, queda con Chrome.
+  Ese endpoint no está documentado: si lo cambian, se rompe. Conviene pedirle a
+  Cargo Expreso acceso formal de integración.
+- **La API de grupos de WhatsApp no sirve acá.** Solo puede *crear* grupos, no
+  unirse a los que ya existen, y exige Cuenta Oficial de Empresa (la insignia),
+  que Meta da por notoriedad de marca, no por cumplir requisitos. Por eso las
+  guías van por mensaje directo al número de la API.
+
+### Trampa que nos costó una fila hoy
+
+**El Apps Script de la hoja corre una versión CONGELADA.** Guardar con Cmd+S no
+alcanza: hay que ir a Implementar → Administrar implementaciones → lápiz →
+Nueva versión → Implementar. Si no, los cambios no salen y las filas entran
+corridas. Nos pasó con la columna No. Guía.
 
 ---
+
 
 ## 1. Seguridad de la base
 
