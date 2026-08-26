@@ -46,6 +46,27 @@ const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
 /** Rellenos que el sistema pone solo y que NO son el nombre de nadie. */
 const NOMBRES_DE_RELLENO = ['lead whatsapp', 'cliente', 'sin nombre', 'contacto', '.', '..', '...']
 
+/** Texto comparable: sin acentos, sin mayusculas, sin espacios de sobra. */
+function normalizar(texto: string): string {
+  return (texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Ultima linea del historial de combos, sin la fecha de adelante. */
+function ultimoCombo(historial: string | null | undefined): string {
+  const linea =
+    String(historial ?? '')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .pop() ?? ''
+  return linea.replace(/^\[\d{4}-\d{2}-\d{2}\]\s*/, '')
+}
+
 /** ¿Sirve este nombre para rotular una guia de envio? */
 function esNombreUsable(nombre: string, telefono: string): boolean {
   const n = (nombre || '').trim()
@@ -223,7 +244,7 @@ export async function applyDealUpdates(
     const { data: deal } = await db
       .from('deals')
       .select(
-        'id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at',
+        'id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at, value',
       )
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
@@ -248,20 +269,58 @@ export async function applyDealUpdates(
       patch.title = nombreUtilizable
     }
 
+    // -- ¿ES UN PEDIDO NUEVO O EL MISMO DE SIEMPRE? -----------------------
+    // Antes bastaba con que el pedido anterior estuviera Pagado y que el bot
+    // reenviara un total. Eso es falso: un cliente que ya pago y despues
+    // pregunta por la factura hace que el bot repita producto y total, y el
+    // sistema lo tomaba como compra nueva. Le paso a Juan Carlos Gomez el
+    // 24-08: quedo con dos lineas de Africa Mia habiendo comprado una vez.
+    //
+    // Un pedido nuevo tiene algo distinto: otro producto u otro monto. Si
+    // producto y monto son los mismos que ya estan guardados, es el mismo
+    // pedido y no se toca nada.
+    const yaPagado = (
+      (deal as { payment_status?: string | null }).payment_status || ''
+    )
+      .toLowerCase()
+      .includes('pagad')
+    const comboGuardado = ultimoCombo(
+      (deal as { combo_history?: string | null }).combo_history,
+    )
+    const totalGuardado = parseFloat(
+      String((deal as { value?: string | number | null }).value ?? '').replace(
+        /[^0-9.]/g,
+        '',
+      ),
+    )
+    const totalEntrante = parseFloat(
+      String(updates.total ?? '').replace(/[^0-9.]/g, ''),
+    )
+    const cambioElProducto =
+      !!updates.combo &&
+      !!comboGuardado &&
+      normalizar(updates.combo) !== normalizar(comboGuardado)
+    const cambioElTotal =
+      Number.isFinite(totalEntrante) &&
+      Number.isFinite(totalGuardado) &&
+      Math.abs(totalEntrante - totalGuardado) >= 0.01
+    const esPedidoNuevo = yaPagado && (cambioElProducto || cambioElTotal)
+    if (yaPagado && !esPedidoNuevo && (updates.total || updates.combo)) {
+      console.log(
+        `[deal-updates] deal ${(deal as { id: string }).id}: mismo producto y mismo total que el pedido pagado, no es compra nueva`,
+      )
+    }
+
     if (updates.total) {
       const amount = parseFloat(String(updates.total).replace(/[^0-9.]/g, ''))
       if (Number.isFinite(amount) && amount > 0) {
         patch.value = String(amount)
         const prevSold = (deal as { sold_at?: string | null }).sold_at
-        const currentStatus = (
-          (deal as { payment_status?: string | null }).payment_status || ''
-        ).toLowerCase()
-        if (currentStatus.includes('pagad')) {
-          // Repeat purchase: the previous sale was already paid, so a new
-          // confirmed total means a brand-new order. Restart the payment
-          // cycle (back to Pendiente so it must be confirmed again) and
-          // stamp a fresh sale date — unless the bot already reported a
-          // newer status in this same message.
+        if (esPedidoNuevo) {
+          // Compra nueva de verdad (cambio el producto o el monto): se
+          // reinicia el ciclo de pago para que se vuelva a confirmar y se
+          // sella una fecha de venta fresca, salvo que el bot ya haya
+          // reportado un estado mas nuevo en este mismo mensaje.
           if (!updates.payment_status) patch.payment_status = 'Pendiente'
           patch.sold_at = new Date().toISOString()
           // Pedido NUEVO: se borra la marca del anterior para que este si
@@ -281,12 +340,7 @@ export async function applyDealUpdates(
         patch.combo_history = line
       } else if (prev.includes(line)) {
         patch.combo_history = prev
-      } else if (
-        updates.total &&
-        ((deal as { payment_status?: string | null }).payment_status || '')
-          .toLowerCase()
-          .includes('pagad')
-      ) {
+      } else if (esPedidoNuevo) {
         // RECOMPRA genuina: el pedido anterior ya estaba pagado, así que
         // esto es una orden nueva → se conserva el histórico y se agrega
         // una línea nueva.
