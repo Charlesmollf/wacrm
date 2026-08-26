@@ -222,7 +222,9 @@ export async function applyDealUpdates(
     // the current conversation is about.
     const { data: deal } = await db
       .from('deals')
-      .select('id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id')
+      .select(
+        'id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at',
+      )
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
       .order('created_at', { ascending: false })
@@ -230,7 +232,7 @@ export async function applyDealUpdates(
       .maybeSingle()
     if (!deal) return
 
-    const patch: Record<string, string> = {}
+    const patch: Record<string, string | null> = {}
     if (updates.payment_method) patch.payment_method = updates.payment_method
     if (updates.payment_status) patch.payment_status = updates.payment_status
     if (updates.grind) patch.grind = updates.grind
@@ -262,6 +264,9 @@ export async function applyDealUpdates(
           // newer status in this same message.
           if (!updates.payment_status) patch.payment_status = 'Pendiente'
           patch.sold_at = new Date().toISOString()
+          // Pedido NUEVO: se borra la marca del anterior para que este si
+          // pueda avisar cuando le toque entrar a la cola.
+          patch.confirm_requested_at = null
         } else if (!prevSold) {
           patch.sold_at = new Date().toISOString()
         }
@@ -412,17 +417,38 @@ export async function applyDealUpdates(
     if (Object.keys(patch).length === 0) return
     await db.from('deals').update(patch).eq('id', (deal as { id: string }).id)
 
-    // Fire the owner alert the moment this deal newly enters the
-    // "Confirmar pagos" queue (transition INTO 'Por confirmar'). Only on
-    // the transition, so we never double-alert. Best-effort, non-blocking.
-    const prevStatus = (deal as { payment_status?: string | null }).payment_status || ''
-    if (patch.payment_status === 'Por confirmar' && prevStatus !== 'Por confirmar') {
-      void notifyPaymentToConfirm(db, {
-        accountId,
-        contactId,
-        value: patch.value ?? updates.total ?? null,
-        paymentMethod: effectiveMethod || null,
-      })
+    // Aviso al duenio cuando el pedido entra a "Confirmar pagos".
+    //
+    // Antes se comparaba contra `deal.payment_status`, que es una FOTO leida al
+    // inicio de esta funcion. Si dos caminos corren para el mismo mensaje (pasa
+    // con las imagenes: las atiende image-reply y si la llamada de vision falla
+    // cae al camino de texto), los dos leen la misma foto vieja y los dos
+    // avisan. Le paso a Luis Lopez Bonilla el 25-08.
+    //
+    // Ahora el aviso se RECLAMA en la base: gana quien logre poner la marca
+    // estando en null. El segundo no recibe fila y se calla. Mismo patron que
+    // claim_ai_reply_slot.
+    if (patch.payment_status === 'Por confirmar') {
+      const { data: reclamado } = await db
+        .from('deals')
+        .update({ confirm_requested_at: new Date().toISOString() })
+        .eq('id', (deal as { id: string }).id)
+        .is('confirm_requested_at', null)
+        .select('id')
+        .maybeSingle()
+
+      if (reclamado) {
+        void notifyPaymentToConfirm(db, {
+          accountId,
+          contactId,
+          value: patch.value ?? updates.total ?? null,
+          paymentMethod: effectiveMethod || null,
+        })
+      } else {
+        console.log(
+          `[deal-updates] deal ${(deal as { id: string }).id}: ya estaba en la cola de confirmacion, no se repite el aviso`,
+        )
+      }
     }
 
     // Keep the filterable "Pago: …" tag in sync with the new status.
