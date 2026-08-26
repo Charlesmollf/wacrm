@@ -96,6 +96,16 @@ export async function buildCustomerFile(
       .join(' | ')
       .slice(0, 400)
 
+    // Estado del pedido en curso. Sin esto el bot no sabe que ese pedido YA
+    // se mando a confirmar, y trata cada dato que llega despues (una direccion
+    // confirmada, un cambio de molienda) como si abriera un pedido nuevo.
+    // Le paso a Luis Lopez Bonilla el 25-08: mando el comprobante a las 13:30,
+    // confirmo la direccion a las 15:07, y salio confirmacion dos veces.
+    const estadoPago = String(deal?.payment_status ?? '').trim()
+    const yaEnCola = /por confirmar/i.test(estadoPago)
+    const yaPagado = /pagad/i.test(estadoPago)
+    const totalActual = deal?.value ? `Q${String(deal.value).replace(/\.00$/, '')}` : ''
+
     const missing = REQUERIDOS.filter((c) => !tiene[c])
     if (Object.keys(tiene).length === 0 && !historial) return vacio
 
@@ -109,6 +119,19 @@ export async function buildCustomerFile(
       (missing.length > 0
         ? `FALTA UNICAMENTE: ${missing.join(', ')}.\n`
         : `NO FALTA NINGUN DATO: ya se puede cerrar el pedido.\n`) +
+      (yaEnCola
+        ? `\n=== ESTE PEDIDO YA ESTA EN LA COLA DE CONFIRMACION ===\n` +
+          `El pedido de ${totalActual || 'este cliente'} ya se mando a confirmar. Por lo tanto:\n` +
+          `- Cualquier dato que mande ahora (direccion, molienda, NIT, un "si") CORRIGE ese mismo\n` +
+          `  pedido. NO es un pedido nuevo. NO lo vuelvas a confirmar ni repitas el resumen completo.\n` +
+          `- Responde en UNA linea confirmando el cambio, nada mas.\n` +
+          `- Solo si el cliente pide MAS cafe ademas de lo ya confirmado, preguntale claro:\n` +
+          `  "¿Se lo agrego al pedido que ya tengo o es uno aparte?" y ESPERA su respuesta\n` +
+          `  antes de tocar el total.\n`
+        : yaPagado
+          ? `\n=== EL PEDIDO ANTERIOR YA ESTA PAGADO ===\n` +
+            `Si pide cafe otra vez es un pedido NUEVO y arranca de cero.\n`
+          : '') +
       `\n=== COMO CONTESTAR (regla de estilo, es obligatoria) ===\n` +
       `1. Cada dato que el cliente manda se guarda SOLO en el CRM. NUNCA se lo repitas de vuelta.\n` +
       `2. Contesta en UNA o DOS lineas: reconoce brevemente y pide UNICAMENTE lo que falta de la lista de arriba.\n` +
