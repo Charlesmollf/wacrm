@@ -60,17 +60,23 @@ export async function POST(request: Request) {
 
     // La firma es lo unico que separa un pedido real de cualquiera que
     // adivine la direccion. Sin secreto guardado no se procesa nada.
+    // La clave puede vivir en dos lados. Se prefiere la de la base (por si
+    // algun dia hay varias tiendas), pero lo normal es tenerla como variable
+    // de entorno en el servidor: asi la pega el duenio directo en Hostinger y
+    // no pasa por ningun lado mas.
     const guardado = (cfg as { shopify_webhook_secret?: string | null }).shopify_webhook_secret
-    if (!guardado) {
+    let secreto = ''
+    if (guardado) {
+      try {
+        secreto = decrypt(guardado)
+      } catch {
+        console.error('[shopify] no se pudo descifrar la clave guardada')
+      }
+    }
+    if (!secreto) secreto = process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
+    if (!secreto) {
       console.error(`[shopify] falta la clave de firma para ${dominio}`)
       return NextResponse.json({ ok: true, ignorado: 'sin clave de firma' })
-    }
-    let secreto: string
-    try {
-      secreto = decrypt(guardado)
-    } catch {
-      console.error('[shopify] no se pudo descifrar la clave de firma')
-      return NextResponse.json({ ok: true, ignorado: 'clave ilegible' })
     }
     if (!firmaValida(cuerpo, firma, secreto)) {
       console.warn(`[shopify] firma invalida desde ${dominio}`)
