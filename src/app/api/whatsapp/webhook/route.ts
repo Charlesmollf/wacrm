@@ -13,6 +13,7 @@ import { applyDealUpdates } from '@/lib/ai/deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import { archivarMedia } from '@/lib/whatsapp/media-store'
+import { esNumeroInterno } from '@/lib/whatsapp/internal-numbers'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -689,6 +690,12 @@ async function processMessage(
     }
   }
 
+  // ¿Es alguien de la casa? La tostaduria manda las guias por aca, y el
+  // duenio prueba cosas. Se guarda el mensaje igual (de ahi sacamos el
+  // numero de guia), pero no se dispara nada de lo que es para clientes:
+  // ni el bot, ni la alerta de "necesita un humano", ni el conteo de leads.
+  const esInterno = await esNumeroInterno(supabaseAdmin(), accountId, senderPhone)
+
   // Reactions short-circuit here — they aren't messages. We never insert
   // into `messages`, never bump unread_count, never update last_message_text.
   // Done before parseMessageContent so the media-URL fetch is skipped.
@@ -832,7 +839,7 @@ async function processMessage(
   // replies (last_outbound_at moves past last_inbound_at) the next burst
   // alerts again. Fire-and-forget; never blocks the webhook.
   // ============================================================
-  if (convWasPaused) {
+  if (convWasPaused && !esInterno) {
     const isBurstStart = prevLastOutboundAt >= prevLastInboundAt
     if (isBurstStart) {
       void notifyHumanNeeded(supabaseAdmin(), {
@@ -923,7 +930,9 @@ async function processMessage(
   // listens to only one trigger runs only when that trigger matches.
   if (contactOutcome.wasCreated) automationTriggers.unshift('new_contact_created')
   if (isFirstInboundMessage) automationTriggers.unshift('first_inbound_message')
-  for (const triggerType of automationTriggers) {
+  // Los numeros de la casa no disparan automatizaciones: si no, cada guia
+  // que manda la tostaduria arrancaria la bienvenida al cliente nuevo.
+  for (const triggerType of esInterno ? [] : automationTriggers) {
     runAutomationsForTrigger({
       accountId,
       triggerType,
@@ -997,7 +1006,7 @@ async function processMessage(
   }
 
   // AI auto-reply.
-  if (!flowConsumed && !interactiveReplyId) {
+  if (!flowConsumed && !interactiveReplyId && !esInterno) {
     // Stickers are just webp images — route them through the same
     // vision path so a sticker-only inbound still gets a reply instead
     // of being silently ignored (it matches neither the image branch
