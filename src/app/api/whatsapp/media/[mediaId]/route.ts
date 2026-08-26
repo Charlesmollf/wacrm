@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import { leerMediaGuardada, archivarMedia } from '@/lib/whatsapp/media-store'
 
 export async function GET(
   request: Request,
@@ -48,6 +49,20 @@ export async function GET(
       )
     }
 
+    // Primero nuestro propio archivo. Las imagenes recibidas se guardan al
+    // momento de llegar, asi que casi siempre salen de aca: sin llamada a
+    // Meta, y siguen viendose aunque Meta ya las haya borrado.
+    const guardada = await leerMediaGuardada({ mediaId, accountId })
+    if (guardada) {
+      return new Response(new Uint8Array(guardada.buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': guardada.contentType,
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        },
+      })
+    }
+
     // Fetch and decrypt WhatsApp config
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
@@ -73,11 +88,16 @@ export async function GET(
       accessToken,
     })
 
+    // Es una imagen vieja, de antes de que guardaramos copia. Ya que la
+    // bajamos, la archivamos para que la proxima vez salga de aca y no se
+    // pierda cuando Meta la borre.
+    void archivarMedia({ mediaId, accessToken, accountId })
+
     return new Response(new Uint8Array(buffer), {
       status: 200,
       headers: {
         'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': 'private, max-age=86400',
       },
     })
   } catch (error) {
