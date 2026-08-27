@@ -5,6 +5,7 @@ import type { AutomationContext } from '@/lib/automations/engine'
 import { drainScheduledBroadcasts } from '@/lib/whatsapp/scheduled-broadcast'
 import { isBusinessHoursGT, runPipelineTimers } from '@/lib/crm/pipeline-timers'
 import { runLeadFollowups } from '@/lib/crm/lead-followup'
+import { avisarGuiasPendientes } from '@/lib/shipping/avisar-guia'
 import { reconcileCapiPurchases } from '@/lib/crm/capi-reconcile'
 
 export const maxDuration = 60
@@ -102,6 +103,16 @@ export async function GET(request: Request) {
     console.error('[cron/tick] lead follow-ups failed:', e)
   }
 
+  // Aviso de guia al cliente: pedidos en Enviado que ya tienen numero
+  // de guia y todavia no se avisaron. Respeta el horario habil por
+  // dentro y nunca lanza.
+  let avisosGuia: unknown = null
+  try {
+    avisosGuia = await avisarGuiasPendientes(admin)
+  } catch (e) {
+    console.error('[cron/tick] avisos de guia failed:', e)
+  }
+
   const { data: due, error } = await admin
     .from('automation_pending_executions')
     .select('*')
@@ -150,5 +161,6 @@ export async function GET(request: Request) {
     timers,
     capiReconcile,
     followups,
+    avisosGuia,
   })
 }
