@@ -24,6 +24,14 @@ export interface GuiaPdf {
   destinatario: string
   /** Telefono del destinatario ya normalizado, ej. "50230230524". */
   telefono: string
+  /**
+   * Lo que la tostaduria escribio en "Referencia 1" (el producto). Sirve
+   * para distinguir la guia de una recompra de la de un envio viejo del
+   * mismo cliente. Ojo: NO es confiable como identificador — a veces
+   * viene mal escrito (en una guia real decia solo "cafetera italiana"),
+   * asi que solo se usa para descartar, nunca para exigir.
+   */
+  producto: string | null
   /** Los textos crudos, para poder explicar por que algo no calzo. */
   textos: string[]
 }
@@ -111,8 +119,19 @@ export function normalizarTelefono(crudo: string): string | null {
   return null
 }
 
-/** Un numero de guia de Cargo Expreso: letra + digitos + guion + digito. */
-const RE_GUIA = /^[A-Z]\d{6,}-\d+$/
+/**
+ * Numero de guia de Cargo Expreso.
+ *
+ * La forma normal es letra + digitos + guion + digito (A417513188-1), pero
+ * los envios A AGENCIA traen ademas una letra pegada al final de los
+ * digitos: A417470433A-1. Con el patron viejo esa guia no se reconocia y
+ * el envio de Elisa Huinac se quedo sin numero en la hoja.
+ *
+ * Probado contra las 11 guias reales recibidas y contra los demas textos
+ * del PDF (AACA, XLA, AXL1, GUA10, 1/1, 24-8-2026, 4531-6000...), que no
+ * deben confundirse con una guia.
+ */
+const RE_GUIA = /^[A-Z]{1,2}\d{6,}[A-Z]{0,2}-\d{1,3}$/
 
 export function parseGuiaPdf(pdf: Buffer): GuiaPdf | null {
   const textos = extraerTextos(pdf)
@@ -148,5 +167,77 @@ export function parseGuiaPdf(pdf: Buffer): GuiaPdf | null {
 
   if (!telefono || !destinatario) return null
 
-  return { guia, destinatario, telefono, textos }
+  const producto = despuesDe(/^Referencia\s*1$/i)
+
+  return { guia, destinatario, telefono, producto, textos }
+}
+
+/** Texto comparable: sin fecha, sin acentos, sin puntuacion. */
+function normalizarProducto(s: string): string {
+  return String(s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/^\[[^\]]*\]\s*/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+/** Palabras que no distinguen un producto de otro. */
+const RUIDO = new Set(['de', 'con', 'y', 'sin', 'accesorio', 'la', 'el', 'gr', '400'])
+
+function tokensProducto(s: string): Set<string> {
+  return new Set(
+    normalizarProducto(s)
+      .split(' ')
+      .filter((w) => w.length > 2 && !RUIDO.has(w)),
+  )
+}
+
+function similitud(a: string, b: string): number {
+  const A = tokensProducto(a)
+  const B = tokensProducto(b)
+  if (A.size === 0 || B.size === 0) return 0
+  let comunes = 0
+  for (const t of A) if (B.has(t)) comunes++
+  return comunes / Math.max(A.size, B.size)
+}
+
+export type VerificacionProducto = 'ok' | 'guia-de-otra-venta' | 'sin-datos'
+
+/**
+ * ¿La guia corresponde a la venta ACTUAL del pedido, o a una anterior?
+ *
+ * El CRM reusa el mismo deal cuando un cliente recompra, asi que su
+ * `combo_history` acumula varias ventas. Sin esto, la guia de un envio
+ * viejo se pegaba al pedido nuevo: a Chin Chen Liu se le mando la guia de
+ * su Gesha + Kenia cuando ya habia pedido un Colosos de America.
+ *
+ * Solo se bloquea con evidencia POSITIVA — que el producto del PDF se
+ * parezca claramente mas a una venta anterior que a la actual. Si no se
+ * parece a ninguna NO se bloquea, porque la tostaduria a veces escribe
+ * mal esa referencia (una guia real traia solo "cafetera italiana") y
+ * frenar por eso dejaria pedidos buenos sin numero.
+ */
+export function verificarProducto(
+  productoPdf: string | null | undefined,
+  comboHistory: string | null | undefined,
+): VerificacionProducto {
+  if (!productoPdf || !comboHistory) return 'sin-datos'
+
+  const lineas = String(comboHistory)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  // Una sola venta: no hay con que confundirse.
+  if (lineas.length < 2) return 'ok'
+
+  const simUltima = similitud(productoPdf, lineas[lineas.length - 1])
+  let mejorAnterior = 0
+  for (let i = 0; i < lineas.length - 1; i++) {
+    mejorAnterior = Math.max(mejorAnterior, similitud(productoPdf, lineas[i]))
+  }
+
+  if (mejorAnterior >= 0.6 && mejorAnterior > simUltima) return 'guia-de-otra-venta'
+  return 'ok'
 }
