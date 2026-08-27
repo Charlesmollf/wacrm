@@ -532,7 +532,7 @@ export async function sendMessageToConversation(
  * cayendo en null igual que antes. Una variable sin valor se deja tal
  * cual en vez de escribir "undefined".
  */
-function renderTemplateBody(
+export function renderTemplateBody(
   row: { body_text?: string | null } | null | undefined,
   params: string[] | undefined,
   ): string | null {
