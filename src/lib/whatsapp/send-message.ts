@@ -454,7 +454,7 @@ export async function sendMessageToConversation(
       conversation_id: conversationId,
       sender_type: 'agent',
       content_type: messageType,
-      content_text: interactiveBody ?? contentText ?? null,
+      content_text: interactiveBody ?? contentText ?? renderTemplateBody(templateRow, templateParams) ?? null,
       media_url: mediaUrl || null,
       template_name: templateName || null,
       interactive_payload:
@@ -516,4 +516,31 @@ export async function sendMessageToConversation(
   }
 
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
+}
+
+
+/**
+ * Arma el texto de una plantilla para guardarlo en `messages.content_text`:
+ * el cuerpo aprobado con las variables ya reemplazadas por los valores que
+ * se mandaron.
+ *
+ * Antes esto quedaba en null y el inbox mostraba una burbuja vacia: el
+ * cliente veia su mensaje pero adentro no habia registro de que se le
+ * habia dicho.
+ *
+ * Devuelve null cuando no hay cuerpo, para que el `??` del insert siga
+ * cayendo en null igual que antes. Una variable sin valor se deja tal
+ * cual en vez de escribir "undefined".
+ */
+function renderTemplateBody(
+  row: { body_text?: string | null } | null | undefined,
+  params: string[] | undefined,
+  ): string | null {
+  const cuerpo = row?.body_text
+  if (!cuerpo) return null
+  const valores = params ?? []
+    return cuerpo.replace(/\{\{(\d+)\}\}/g, (original, n) => {
+      const valor = valores[Number(n) - 1]
+      return valor === undefined ? original : valor
+    })
 }
