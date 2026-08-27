@@ -2,19 +2,25 @@
 // Candado de precios.
 //
 // El prompt YA dice los precios correctos y hasta advierte "nunca sumes
-// el envio dos veces". El bot igual lo rompio con una clienta real: le
-// cotizo bien "Q500 + Q45 = Q545" y dos mensajes despues repitio
-// "Q545 + Q45 = Q590", cobrando el envio dos veces. Peor: Q590 es el
-// total legitimo de Africa Mia CON CAFETERA, asi que la tostaduria leyo
-// el monto y le armo la caja con cafetera cuando habia pedido prensa.
+// el envio dos veces". El bot igual lo rompio con clientas reales:
+//
+//   1) A Luisa le cotizo bien "Q500 + Q45 = Q545" y dos mensajes
+//      despues repitio "Q545 + Q45 = Q590", cobrando el envio dos
+//      veces. Peor: Q590 es el total legitimo de Africa Mia CON
+//      CAFETERA, asi que la tostaduria leyo el monto y le armo la caja
+//      con cafetera cuando habia pedido prensa.
+//
+//   2) A la Dra. Flor le cobro 6 bolsas donde habia 5: Q720 + Q45 =
+//      Q765 en vez de Q600 + Q45 = Q645. La aritmetica estaba bien;
+//      la cantidad no. Hubo que devolverle el dinero.
 //
 // Por eso los precios dejan de ser una instruccion de prompt y pasan a
 // ser un candado de codigo, igual que `enforceBankAccount`.
 //
 // REGLA DE ORO: ante la duda NO se toca el mensaje. Solo se corrige
-// cuando hay UN combo y UNA cuenta; si el mensaje esta listando las tres
-// opciones de precio (que es lo que el prompt pide al explicar un combo)
-// se deja intacto.
+// cuando la cuenta se puede reconstruir sin ambiguedad; si el mensaje
+// esta listando las tres opciones de precio (que es lo que el prompt
+// pide al explicar un combo) se deja intacto.
 // ============================================================
 
 const ENVIO = 45
@@ -36,6 +42,31 @@ const CATALOGO: Combo[] = [
   { claves: ['highland coban', 'combo #4'], solo: 220, prensa: 320, cafetera: 440 },
 ]
 
+/**
+ * Bolsas de 400gr sueltas. Q120 todas menos las premium (Q200).
+ * El orden importa: las claves largas van primero para que
+ * "kenia sl28" gane sobre "kenia" y "caturra roja" sobre "caturra".
+ */
+const VARIEDADES: [string, number][] = [
+  ['caturra roja', 120],
+  ['kenia sl28', 200],
+  ['bourbon', 120],
+  ['catuai', 120],
+  ['caturra', 120],
+  ['pacamara', 120],
+  ['maracaturra', 120],
+  ['maragogipe', 120],
+  ['peaberry', 120],
+  ['caracolillo', 120],
+  ['anaerobico', 120],
+  ['cardamomo', 120],
+  ['gesha', 200],
+  ['geisha', 200],
+  ['kenia', 200],
+]
+
+const ACCESORIOS: Record<string, number> = { prensa: 100, cafetera: 200 }
+
 function sinAcentos(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
@@ -51,6 +82,28 @@ function accesorioMencionado(plano: string): Accesorio {
   return 'solo'
 }
 
+/**
+ * Cuenta bolsas sueltas. Cubre los dos formatos que usa el bot:
+ * "2 Anaerobico + 1 Pacamara" y "Anaerobico + Anaerobico + Pacamara".
+ * Devuelve null cuando no reconoce ninguna variedad.
+ */
+function precioDeBolsas(plano: string): number | null {
+  const trozos = plano.split(/[+,\n]/).map((s) => s.trim()).filter(Boolean)
+  let cafe = 0
+  let encontradas = 0
+  for (const trozo of trozos) {
+    for (const [nombre, precio] of VARIEDADES) {
+      if (!trozo.includes(nombre)) continue
+      const m = trozo.match(/(?:^|\D)(\d{1,2})\s*x?\s*(?=[a-z])/)
+      const cant = m ? Number(m[1]) : 1
+      cafe += precio * cant
+      encontradas++
+      break // una variedad por trozo
+    }
+  }
+  return encontradas > 0 ? cafe : null
+}
+
 /** Totales que el mensaje afirma: "= Q590 total" o "total: Q590". */
 function totalesAfirmados(texto: string) {
   const out: { index: number; texto: string; valor: number }[] = []
@@ -64,25 +117,45 @@ function totalesAfirmados(texto: string) {
 }
 
 /**
+ * Precio del cafe (sin envio) que corresponde al pedido descrito en el
+ * texto, o null cuando no se puede saber con certeza.
+ *
+ * Exportada porque el mismo calculo hace falta al GUARDAR el pedido
+ * (`deal-updates.ts`), no solo al hablarle al cliente: el bot puede
+ * decir el total correcto y aun asi escribir otro en la ficha.
+ */
+export function precioEsperadoDelCafe(texto: string): number | null {
+  const plano = sinAcentos(texto)
+
+  const combos = CATALOGO.filter((c) => c.claves.some((k) => plano.includes(k)))
+  // Con varios combos el mensaje es informativo o comparativo.
+  if (combos.length > 1) return null
+
+  const acc = accesorioMencionado(plano)
+  // Prensa y cafetera juntas es un pedido armado a mano: fuera de tabla.
+  if (acc === 'ambos') return null
+
+  if (combos.length === 1) {
+    const c = combos[0]
+    return acc === 'prensa' ? c.prensa : acc === 'cafetera' ? c.cafetera : c.solo
+  }
+
+  // Sin combo con nombre: puede ser un pedido de bolsas sueltas.
+  const bolsas = precioDeBolsas(plano)
+  if (bolsas === null) return null
+  return acc === 'solo' ? bolsas : bolsas + ACCESORIOS[acc]
+}
+
+/**
  * Revisa el total de un mensaje de venta y lo corrige si no cuadra con
  * el catalogo. Devuelve el texto tal cual cuando no hay nada seguro que
  * corregir.
  */
 export function enforceTotales(texto: string): string {
   if (!texto) return texto
-  const plano = sinAcentos(texto)
 
-  const combos = CATALOGO.filter((c) => c.claves.some((k) => plano.includes(k)))
-  // Con varios combos el mensaje es informativo o comparativo: no se toca.
-  if (combos.length !== 1) return texto
-
-  const acc = accesorioMencionado(plano)
-  // Prensa y cafetera juntas es un pedido armado a mano: fuera del catalogo.
-  if (acc === 'ambos') return texto
-
-  const combo = combos[0]
-  const cafe =
-    acc === 'prensa' ? combo.prensa : acc === 'cafetera' ? combo.cafetera : combo.solo
+  const cafe = precioEsperadoDelCafe(texto)
+  if (cafe === null) return texto
   const esperado = cafe + ENVIO
 
   // Caso preferido: la formula completa "QA + Q45 envio = QB". Se
@@ -109,4 +182,22 @@ export function enforceTotales(texto: string): string {
 
   const corregido = t.texto.replace(String(t.valor), String(esperado))
   return texto.slice(0, t.index) + corregido + texto.slice(t.index + t.texto.length)
+}
+
+/**
+ * Valida el total que se va a GUARDAR en `deals.value` contra el
+ * producto que se guarda junto a el. Devuelve el total corregido, o el
+ * original cuando no se puede calcular con certeza.
+ *
+ * Existe porque el texto y la ficha se escriben por caminos distintos:
+ * a Luisa el bot le dijo "Q545" en el chat y guardo 590 en el pedido.
+ */
+export function enforceTotalGuardado(
+  combo: string | null | undefined,
+  total: number | null | undefined,
+): number | null | undefined {
+  if (!combo || total === null || total === undefined) return total
+  const cafe = precioEsperadoDelCafe(combo)
+  if (cafe === null) return total
+  return cafe + ENVIO
 }
