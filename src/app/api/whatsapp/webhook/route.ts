@@ -18,6 +18,7 @@ import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
 } from '@/lib/whatsapp/template-webhook'
+import { dispatchGuiaPdf } from '@/lib/shipping/dispatch-guia'
 
 // The `after()` callback in POST runs within this route's max duration.
 // Inbound processing can fan out to per-media Meta verification calls, so
@@ -855,6 +856,26 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // Guia de Cargo Expreso. La tostaduria reenvia a este numero el PDF de
+  // cada envio; se lee, se empareja con el pedido por el telefono del
+  // destinatario y el numero de guia entra solo a la hoja.
+  //
+  // Va sin await a proposito: leer el PDF y llamar a la hoja puede tardar
+  // varios segundos y no debe demorar el resto del webhook.
+  // `dispatchGuiaPdf` tiene su propio try/catch y nunca lanza; tambien
+  // descarta solo lo que no sea PDF de un numero de la casa.
+  if (contentType === 'document' && message.document?.id) {
+    void dispatchGuiaPdf({
+      db: supabaseAdmin(),
+      accountId,
+      userId: configOwnerUserId,
+      esInterno,
+      mediaId: message.document.id,
+      mimeType: message.document.mime_type,
+      accessToken,
+    })
+  }
 
   // ============================================================
   // Flow runner dispatch.
