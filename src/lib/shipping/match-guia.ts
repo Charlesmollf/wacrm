@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { parseGuiaPdf, type GuiaPdf } from './parse-guia-pdf'
+import { parseGuiaPdf, verificarProducto, type GuiaPdf } from './parse-guia-pdf'
 
 /**
  * Empareja el PDF de una guia de Cargo Expreso con su pedido y escribe el
@@ -127,7 +127,7 @@ export async function procesarGuiaPdf(
 
   const { data: candidatos } = await db
     .from('deals')
-    .select('id, sold_at, address')
+    .select('id, sold_at, address, combo_history')
     .eq('contact_id', contacto.id)
     .in('stage_id', idsEtapas)
     .is('tracking_number', null)
@@ -161,6 +161,23 @@ export async function procesarGuiaPdf(
   }
 
   const deal = lista[0]
+
+  // ¿Es la guia de ESTA venta o de una anterior del mismo cliente? El CRM
+  // reusa el deal en las recompras, asi que sin esto la guia de un envio
+  // viejo se pega al pedido nuevo. Le paso a Chin Chen Liu: recibio la
+  // guia de su Gesha + Kenia cuando ya habia pedido un Colosos de America.
+  const veredicto = verificarProducto(datos.producto, deal.combo_history)
+  if (veredicto === 'guia-de-otra-venta') {
+    await avisar(
+      db,
+      accountId,
+      userId,
+      'Guia de un pedido anterior',
+      `${resumen}. El PDF dice "${datos.producto}" pero el pedido actual de ${contacto.name} es otro. Parece la guia de una compra anterior: no se escribio nada. Revisar a mano.`,
+      contacto.id,
+      )
+    return { ok: false, motivo: 'guia de otra venta', datos }
+  }
 
   // 3) Primero la hoja. Si la hoja no acepta, no se toca la base: asi las
   //    dos quedan diciendo lo mismo.
