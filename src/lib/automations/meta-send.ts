@@ -12,6 +12,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { supabaseAdmin } from './admin-client'
+import { renderTemplateBody } from '@/lib/whatsapp/send-message'
 
 // ------------------------------------------------------------
 // Automation-side Meta sender.
@@ -192,8 +193,22 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
   const content_type = input.kind === 'template' ? 'template' : 'text'
-  const content_text = input.kind === 'text' ? input.text : null
+  let content_text = input.kind === 'text' ? input.text : null
   const template_name = input.kind === 'template' ? input.templateName : null
+
+  // En las plantillas, el cuerpo aprobado vive en `message_templates`.
+  // Se trae y se guarda YA sustituido: antes esto quedaba en null y el
+  // inbox mostraba una burbuja vacia — el cliente veia su mensaje pero
+  // adentro no habia registro de que se le habia dicho.
+  if (input.kind === 'template') {
+    const { data: plantilla } = await db
+    .from('message_templates')
+    .select('body_text')
+    .eq('account_id', input.accountId)
+    .eq('name', input.templateName)
+    .maybeSingle()
+    content_text = renderTemplateBody(plantilla, input.params)
+  }
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
