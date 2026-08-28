@@ -26,12 +26,14 @@ const PLANTILLA = 'guia_envio_cargo_expreso'
 const IDIOMA_PLANTILLA = 'es'
 
 const LINK_RASTREO = 'https://cargoexpreso.com/tracking/'
-// Tener numero de guia YA significa que el paquete salio, sin importar
-// en que columna del embudo quedo la tarjeta. Antes esto solo miraba
-// 'Enviado' y a Luisa Fernanda nunca le llego su aviso: su pedido se
-// quedo en 'Pedidos Confirmados' aunque ya tenia guia. Se usan las
-// mismas dos etapas con las que se acepta escribir la guia.
-const ETAPAS_AVISABLES = ['Enviado', 'Pedidos Confirmados']
+// SOLO se avisa cuando se cumplen LAS DOS condiciones: hay numero de
+// guia Y el pedido esta en 'Enviado'. Si falta una, se espera.
+//
+// Ojo con la trampa: tener guia NO significa que el paquete salio. La
+// tostaduria imprime la guia antes de despachar. Lo comprobamos caro:
+// al aceptar tambien 'Pedidos Confirmados' les llego el aviso a Julia
+// Martin y a Chin Chen Liu con su pedido todavia en proceso.
+const ETAPA_ENVIADO = 'Enviado'
 const VENTANA_HORAS = 24
 const MAX_POR_CORRIDA = 25
 
@@ -74,7 +76,7 @@ export async function avisarGuiasPendientes(
     const { data: etapas } = await db
       .from('pipeline_stages')
       .select('id')
-      .in('name', ETAPAS_AVISABLES)
+       .eq('name', ETAPA_ENVIADO)
     const idsEtapas = (etapas ?? []).map((e: { id: string }) => e.id)
     if (idsEtapas.length === 0) return res
 
