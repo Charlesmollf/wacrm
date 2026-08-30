@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { loadSheetsWebhook } from '@/lib/sheets/webhook-config'
 
 /**
  * Manda un pedido confirmado a la Google Sheet "Pedidos de Cafe Yaguer".
@@ -61,15 +62,9 @@ export async function pushOrderToSheet(
   deal: OrderForSheet,
 ): Promise<{ ok: boolean; reason?: string }> {
   try {
-    const { data: cfg } = await db
-      .from('whatsapp_config')
-      .select('sheets_webhook_url, sheets_webhook_token')
-      .eq('account_id', accountId)
-      .maybeSingle()
-
-    const url = cfg?.sheets_webhook_url as string | undefined
-    const token = cfg?.sheets_webhook_token as string | undefined
-    if (!url || !token) return { ok: false, reason: 'hoja no configurada' }
+    const cfg = await loadSheetsWebhook(db, accountId)
+    if (!cfg) return { ok: false, reason: 'hoja no configurada' }
+    const { url, token } = cfg
 
     let cliente = ''
     let telefono = ''
