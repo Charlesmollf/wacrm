@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseGuiaPdf, verificarProducto, type GuiaPdf } from './parse-guia-pdf'
+import { loadSheetsWebhook } from '@/lib/sheets/webhook-config'
 
 /**
  * Empareja el PDF de una guia de Cargo Expreso con su pedido y escribe el
@@ -48,15 +49,9 @@ async function escribirEnHoja(
   dealId: string,
   guia: string,
 ): Promise<{ ok: boolean; fila?: number; error?: string }> {
-  const { data: cfg } = await db
-    .from('whatsapp_config')
-    .select('sheets_webhook_url, sheets_webhook_token')
-    .eq('account_id', accountId)
-    .maybeSingle()
-
-  const url = cfg?.sheets_webhook_url as string | undefined
-  const token = cfg?.sheets_webhook_token as string | undefined
-  if (!url || !token) return { ok: false, error: 'hoja no configurada' }
+  const cfg = await loadSheetsWebhook(db, accountId)
+  if (!cfg) return { ok: false, error: 'hoja no configurada' }
+  const { url, token } = cfg
 
   try {
     const res = await fetch(url, {
