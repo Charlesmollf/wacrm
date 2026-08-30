@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { engineSendText, engineSendTemplate } from '@/lib/automations/meta-send'
 import { isBusinessHoursGT } from '@/lib/crm/pipeline-timers'
+import { loadSheetsWebhook } from '@/lib/sheets/webhook-config'
 
 // ============================================================
 // Aviso de guia al cliente.
@@ -99,15 +100,9 @@ async function estadosDeLaHoja(
 ): Promise<FilaHoja[] | null> {
   if (dealIds.length === 0) return []
 
-  const { data: cfg } = await db
-    .from('whatsapp_config')
-    .select('sheets_webhook_url, sheets_webhook_token')
-    .eq('account_id', accountId)
-    .maybeSingle()
-
-  const url = cfg?.sheets_webhook_url as string | undefined
-  const token = cfg?.sheets_webhook_token as string | undefined
-  if (!url || !token) return null
+  const cfg = await loadSheetsWebhook(db, accountId)
+  if (!cfg) return null
+  const { url, token } = cfg
 
   try {
     const res = await fetch(url, {
