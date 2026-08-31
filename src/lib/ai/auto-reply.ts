@@ -12,7 +12,7 @@ import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
-import { enforceTotales } from './enforce-totales'
+import { enforceTotales, enforceAccesorios } from './enforce-totales'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -283,7 +283,11 @@ export async function dispatchInboundToAiReply(
     // NO se envía nada. Antes el respaldo mandaba el texto crudo y el
     // cliente llegaba a ver la marca interna en su chat.
     const finalText = enforceSuma(
-      enforceTotales(enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || ''))),
+      enforceAccesorios(
+        enforceTotales(
+          enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
+        ),
+      ),
     )
     if (finalText) {
       await engineSendText({
