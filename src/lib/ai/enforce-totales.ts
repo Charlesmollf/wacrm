@@ -26,6 +26,8 @@
 export const ENVIO = 45
 
 export interface Combo {
+  /** Nombre tal cual se le muestra al cliente. */
+  nombre: string
   claves: string[]
   solo: number
   prensa: number
@@ -34,12 +36,12 @@ export interface Combo {
 
 /** Precios del cafe SIN envio. Fuente: MANUAL.md seccion 2. */
 export const CATALOGO: Combo[] = [
-  { claves: ['procesos secretos'], solo: 240, prensa: 260, cafetera: 440 },
-  { claves: ['colosos de america', 'colosos'], solo: 345, prensa: 445, cafetera: 545 },
-  { claves: ['intensa dulzura'], solo: 345, prensa: 445, cafetera: 545 },
-  { claves: ['mitico coban'], solo: 345, prensa: 445, cafetera: 545 },
-  { claves: ['africa mia'], solo: 400, prensa: 500, cafetera: 545 },
-  { claves: ['highland coban', 'combo #4'], solo: 220, prensa: 320, cafetera: 440 },
+  { nombre: 'Procesos Secretos', claves: ['procesos secretos'], solo: 240, prensa: 260, cafetera: 440 },
+  { nombre: 'Colosos de América', claves: ['colosos de america', 'colosos'], solo: 345, prensa: 445, cafetera: 545 },
+  { nombre: 'Intensa Dulzura', claves: ['intensa dulzura'], solo: 345, prensa: 445, cafetera: 545 },
+  { nombre: 'Mítico Cobán', claves: ['mitico coban'], solo: 345, prensa: 445, cafetera: 545 },
+  { nombre: 'África Mía', claves: ['africa mia'], solo: 400, prensa: 500, cafetera: 545 },
+  { nombre: 'Highland Cobán', claves: ['highland coban', 'combo #4'], solo: 220, prensa: 320, cafetera: 440 },
 ]
 
 /**
@@ -200,4 +202,50 @@ export function enforceTotalGuardado(
   const cafe = precioEsperadoDelCafe(combo)
   if (cafe === null) return total
   return cafe + ENVIO
+}
+
+
+/**
+ * REGLA DURA DEL ACCESORIO.
+ *
+ * Todo combo se vende de tres formas: solo, con prensa francesa o con
+ * cafetera italiana. Si el bot cotiza un combo y NO dice las tres, el
+ * cliente asume lo que vio en la foto del carrusel — donde la caja sale
+ * con cafetera adentro. A Davies le cotizaron "Africa Mia Q400 +
+ * Procesos Secretos Q240" sin nombrar accesorios y dio por hecho que
+ * venian con cafetera y prensa. Se descubrio recien al preparar el
+ * pedido.
+ *
+ * Igual que los precios, esto deja de ser una instruccion de prompt
+ * (que el bot ignoro) y pasa a ser un candado de codigo.
+ *
+ * Solo actua cuando el mensaje esta COTIZANDO: nombra un combo del
+ * catalogo Y pone un precio. No toca la charla suelta, ni el resumen
+ * final del pedido, ni un mensaje que ya hable de accesorios.
+ */
+export function enforceAccesorios(texto: string): string {
+  if (!texto) return texto
+  const plano = sinAcentos(texto)
+
+  // Ya habla de accesorios: el bot hizo su trabajo, no se toca.
+  if (/prensa\s+francesa|cafetera\s+italiana|sin\s+accesorio/.test(plano)) {
+    return texto
+  }
+  // Sin precio no esta cotizando, esta conversando.
+  if (!/q\s*\d{2,4}/.test(plano)) return texto
+  // El resumen final ya cerro el pedido: ahi agregar opciones confunde.
+  if (/💵|molienda:/.test(plano)) return texto
+
+  const combos = CATALOGO.filter((c) => c.claves.some((k) => plano.includes(k)))
+  if (combos.length === 0) return texto
+
+  const lineas = combos.map(
+    (c) =>
+      `📌 *${c.nombre}*: solo Q${c.solo} · con prensa francesa Q${c.prensa} · con cafetera italiana Q${c.cafetera}`,
+  )
+  return (
+    texto.trimEnd() +
+    `\n\n¿Lo desea con accesorio? (estos precios son sin envío; se suman Q${ENVIO} al total)\n` +
+    lineas.join('\n')
+  )
 }
