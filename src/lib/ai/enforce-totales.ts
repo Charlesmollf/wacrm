@@ -23,9 +23,9 @@
 // pide al explicar un combo) se deja intacto.
 // ============================================================
 
-const ENVIO = 45
+export const ENVIO = 45
 
-interface Combo {
+export interface Combo {
   claves: string[]
   solo: number
   prensa: number
@@ -33,7 +33,7 @@ interface Combo {
 }
 
 /** Precios del cafe SIN envio. Fuente: MANUAL.md seccion 2. */
-const CATALOGO: Combo[] = [
+export const CATALOGO: Combo[] = [
   { claves: ['procesos secretos'], solo: 240, prensa: 260, cafetera: 440 },
   { claves: ['colosos de america', 'colosos'], solo: 345, prensa: 445, cafetera: 545 },
   { claves: ['intensa dulzura'], solo: 345, prensa: 445, cafetera: 545 },
@@ -65,9 +65,9 @@ const VARIEDADES: [string, number][] = [
   ['kenia', 200],
 ]
 
-const ACCESORIOS: Record<string, number> = { prensa: 100, cafetera: 200 }
+export const ACCESORIOS: Record<string, number> = { prensa: 100, cafetera: 200 }
 
-function sinAcentos(s: string): string {
+export function sinAcentos(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
@@ -87,7 +87,7 @@ function accesorioMencionado(plano: string): Accesorio {
  * "2 Anaerobico + 1 Pacamara" y "Anaerobico + Anaerobico + Pacamara".
  * Devuelve null cuando no reconoce ninguna variedad.
  */
-function precioDeBolsas(plano: string): number | null {
+export function precioDeBolsas(plano: string): number | null {
   const trozos = plano.split(/[+,\n]/).map((s) => s.trim()).filter(Boolean)
   let cafe = 0
   let encontradas = 0
