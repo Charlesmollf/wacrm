@@ -22,6 +22,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { notifyPaymentToConfirm } from '@/lib/notify/payment-alert'
 import { syncPaymentTag } from '@/lib/crm/payment-tags'
 import { enforceTotalGuardado } from './enforce-totales'
+import { evaluarCierre } from './cerrar-pedido'
 
 /** Instruction block injected into the auto-reply system prompt so the
  *  model knows to emit the marker. Spanish, matching the Kaffeejager
@@ -213,6 +214,7 @@ export async function applyDealUpdates(
     //    WhatsApp SI sirve; lo que no sirve es un vacio, el propio numero
     //    o un relleno tipo "Lead WhatsApp".
     let nombreUtilizable = ''
+    let telefonoContacto = ''
     try {
       const { data: cont } = await db
         .from('contacts')
@@ -222,6 +224,7 @@ export async function applyDealUpdates(
       const actual = String(cont?.name ?? '').trim()
       const perfil = String(cont?.wa_profile_name ?? '').trim()
       const telefono = String(cont?.phone ?? '').trim()
+      telefonoContacto = telefono
 
       if (updates.nombre) {
         const editadoAMano = !!actual && actual !== perfil && actual !== telefono
@@ -391,6 +394,64 @@ export async function applyDealUpdates(
       // salvo que ya venga como Pagado o Por confirmar.
       patch.payment_status = 'Por confirmar'
     }
+    // --- CIERRE AUTOMATICO DEL PEDIDO ---
+    //
+    // El bot manda el resumen final ("¿Esta todo correcto?") y antes se
+    // quedaba esperando un "si" que el cliente casi nunca escribe: ya dio
+    // todos los datos y da la compra por hecha. El pedido se quedaba en
+    // Negociacion, sin total y sin que nadie lo prepare. Le paso a Davies
+    // Guit el 31-08.
+    //
+    // Ahora, si estan TODOS los datos, el pedido entra solo a la cola.
+    // Tres candados para no cerrar de mas:
+    //   1. Solo si en ESTE mensaje el bot reporto algo del pedido. Un
+    //      "hola" de un cliente viejo no revive su pedido de hace meses.
+    //   2. Solo si el pedido no esta ya en la cola o pagado.
+    //   3. Solo con todos los datos; si falta uno, no cierra y queda el
+    //      log diciendo cual (`cerrar-pedido.ts`).
+    const hayMovimientoDePedido = !!(
+      updates.combo ||
+      updates.total ||
+      updates.payment_method ||
+      updates.payment_status ||
+      updates.grind ||
+      updates.address
+    )
+    const estadoActual = (
+      (deal as { payment_status?: string | null }).payment_status || ''
+    ).toLowerCase()
+    const yaEnCola =
+      estadoActual.includes('confirmar') || estadoActual.includes('pagad')
+    const yaVaACerrar = String(patch.payment_status ?? '')
+      .toLowerCase()
+      .includes('confirmar')
+
+    if (hayMovimientoDePedido && !yaEnCola && !yaVaACerrar) {
+      const cierre = evaluarCierre({
+        nombre: nombreUtilizable,
+        combo: updates.combo ?? comboGuardado,
+        molienda:
+          patch.grind ?? (deal as { grind?: string | null }).grind ?? null,
+        formaPago: effectiveMethod,
+        direccion:
+          patch.address ?? (deal as { address?: string | null }).address ?? null,
+        telefono: telefonoContacto,
+        total:
+          Number(patch.value ?? (deal as { value?: number | null }).value) || 0,
+      })
+      if (cierre.cerrar) {
+        if (cierre.total) patch.value = String(cierre.total)
+        patch.payment_status = 'Por confirmar'
+        console.log(
+          `[deal-updates] deal ${(deal as { id: string }).id}: cierre automatico, entra a Confirmar pagos`,
+        )
+      } else {
+        console.log(
+          `[deal-updates] deal ${(deal as { id: string }).id}: todavia no se cierra, falta: ${cierre.faltan.join(', ')}`,
+        )
+      }
+    }
+
 
     // CANDADO: sin nombre del cliente el pedido NO entra a la cola de
     // confirmacion. Sin nombre no se puede rotular la guia de Cargo
