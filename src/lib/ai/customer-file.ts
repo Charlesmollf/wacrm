@@ -68,18 +68,36 @@ export async function buildCustomerFile(
         .pop() ?? ''
 
     const tiene: Record<string, string> = {}
-    // El nombre del perfil de WhatsApp NO cuenta como nombre confirmado:
-    // la mitad de las veces es un apodo y con ese nombre se rotula la guia
-    // de Cargo Expreso. Se muestra igual, pero sigue contando como faltante
-    // para que el bot lo confirme antes de cerrar.
+    // NOMBRE DEL CLIENTE
+    //
+    // La idea original era no rotular una guia de Cargo Expreso con un apodo,
+    // asi que un nombre igual al perfil de WhatsApp no contaba como confirmado.
+    // Salio carisimo: 1886 de 1950 contactos tienen el nombre igual al del
+    // perfil, y a todos les volvia a preguntar como se llaman. Le paso a Yuri
+    // Cardona, cliente desde 2024, con su ficha completa: le pregunto el nombre
+    // tres veces.
+    //
+    // Ahora: si de ese contacto ya sabemos algo mas (vino de Kommo, o tiene
+    // direccion, o ya nos compro), el nombre esta bueno y no se pregunta. Solo
+    // desconfiamos del recien llegado del que no sabemos nada.
     const nombreGuardado = String(cont?.name ?? '').trim()
     const perfilWa = String(cont?.wa_profile_name ?? '').trim()
     const soloDigitos = (s: string) => s.replace(/\D/g, '')
-    const nombreConfirmado =
+    const esRelleno = /^(lead whatsapp|cliente|sin nombre|contacto|\.+)$/i.test(
+      nombreGuardado,
+    )
+    // ¿Ya lo conociamos de antes? Historial de Kommo, direccion o una compra.
+    const yaLoConocemos =
+      (notes ?? []).length > 0 ||
+      !!deal?.address ||
+      !!deal?.combo_history ||
+      !!cont?.email
+    const nombreSirve =
       nombreGuardado.length > 1 &&
-      nombreGuardado.toLowerCase() !== perfilWa.toLowerCase() &&
-      soloDigitos(nombreGuardado) !== soloDigitos(String(cont?.phone ?? ''))
-    if (nombreConfirmado) tiene['nombre'] = nombreGuardado
+      !esRelleno &&
+      soloDigitos(nombreGuardado) !== soloDigitos(String(cont?.phone ?? '')) &&
+      (yaLoConocemos || nombreGuardado.toLowerCase() !== perfilWa.toLowerCase())
+    if (nombreSirve) tiene['nombre'] = nombreGuardado
     else if (nombreGuardado)
       tiene['nombre (SIN CONFIRMAR, es el perfil de WhatsApp)'] = nombreGuardado
     if (cont?.phone) tiene['telefono'] = String(cont.phone)
