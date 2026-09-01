@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { calcularPedido } from './caja'
-import { revisarSalida, totalAfirmado, mensajeDeRespaldo } from './portero'
+import { revisarSalida, totalAfirmado, mensajeDeRespaldo, parteConversacional } from './portero'
 
 const yuri = calcularPedido([{ tipo: 'bolsa', nombre: 'Pacamara', cantidad: 3 }])
 const isidro = calcularPedido(
@@ -89,5 +89,32 @@ describe('portero', () => {
   it('no confunde un numero de guia con una cuenta', () => {
     const t = 'Su número de guía es A417469997-1. Cuenta Monetaria: 30-3093873-2'
     expect(revisarSalida(t, null).ok).toBe(true)
+  })
+})
+
+describe('el mensaje de respaldo conserva el tono', () => {
+  it('mantiene el saludo del modelo y cambia solo la cuenta', () => {
+    const escribio = 'Perfecto \u{1F60A} Se lo preparo en molido.\nSon Q120 \u00D7 3 = Q165 total'
+    const m = mensajeDeRespaldo(yuri, escribio)
+    expect(m).toContain('Perfecto \u{1F60A} Se lo preparo en molido.')
+    expect(m).toContain('TOTAL: Q405')
+    expect(m).not.toContain('Q165')
+  })
+
+  it('si el modelo arranco directo con numeros, usa el texto propio', () => {
+    const m = mensajeDeRespaldo(yuri, 'Q120 \u00D7 3 = Q165 total')
+    expect(m).toContain('Le confirmo su pedido')
+    expect(m).toContain('TOTAL: Q405')
+  })
+
+  it('sin texto original tambien funciona', () => {
+    expect(mensajeDeRespaldo(yuri)).toContain('TOTAL: Q405')
+  })
+
+  it('parteConversacional corta donde empiezan los numeros', () => {
+    expect(parteConversacional('Hola, con gusto le ayudo.\nSon Q345 mas envio')).toBe(
+      'Hola, con gusto le ayudo.',
+    )
+    expect(parteConversacional('Q345 mas envio')).toBe('')
   })
 })
