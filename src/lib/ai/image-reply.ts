@@ -390,15 +390,23 @@ const CUENTA_OFICIAL = '30-3093873-2'
  * también está en el prompt, pero esto garantiza que NUNCA salga otro número.
  */
 function enforceBankAccount(text: string): string {
-  // Solo se toca un número cuando viene precedido por una etiqueta de
-  // cuenta ("cuenta", "cta", "número", "monetaria"). Así un teléfono o un
-  // NIT en el mensaje nunca se altera por error.
-  return text.replace(
-    /((?:cuenta|cta\.?|n[uú]mero|no\.?|monetaria)\s*(?:monetaria|bam)?\s*[:#-]?\s*\**\s*)(\d[\d\s-]{6,24}\d)/gi,
-    (full, etiqueta: string, numero: string) => {
-      const soloDigitos = numero.replace(/\D/g, '')
-      if (soloDigitos === CUENTA_OFICIAL.replace(/\D/g, '')) return full
-      return `${etiqueta}${CUENTA_OFICIAL}`
-    },
-  )
+  // Solo se toca un numero cuando la etiqueta dice CUENTA de verdad.
+  //
+  // Antes la lista incluia "numero" y "no", sin limite de palabra. El "no"
+  // final de "Telefo-no" matcheaba, y el candado reemplazaba el telefono del
+  // cliente por nuestra cuenta bancaria. Salio asi en el resumen de Marlenne
+  // y en el de Davies Guit: "Telefono: 30-3093873-2". Con ese dato la guia de
+  // Cargo Expreso queda sin forma de llamar al cliente.
+  const ETIQUETA_CUENTA =
+    /(\b(?:cuenta|cta\.?|monetaria|bam)\b[^\d\n]{0,24}?)(\d[\d\s-]{6,24}\d)/gi
+  // Si en el mismo tramo se habla de telefono, guia o NIT, ese numero no es
+  // una cuenta aunque la palabra "cuenta" ande cerca.
+  const NO_ES_CUENTA =
+    /\b(tel[eé]fono|tel\.?|celular|whatsapp|gu[ií]a|nit|zona)\b/i
+  return text.replace(ETIQUETA_CUENTA, (full, etiqueta: string, numero: string) => {
+    if (NO_ES_CUENTA.test(etiqueta)) return full
+    const soloDigitos = numero.replace(/\D/g, '')
+    if (soloDigitos === CUENTA_OFICIAL.replace(/\D/g, '')) return full
+    return `${etiqueta}${CUENTA_OFICIAL}`
+  })
 }
