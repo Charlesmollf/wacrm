@@ -13,6 +13,8 @@ import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { enforceTotales, enforceAccesorios } from './enforce-totales'
+import { desgloseDelPedido } from './carrito'
+import { revisarSalida, mensajeDeRespaldo } from './portero'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -276,7 +278,10 @@ export async function dispatchInboundToAiReply(
     // best-effort (never blocks or fails the send).
     const deal = extractDealMarkers(text)
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
-    void applyDealUpdates(db, { accountId, contactId }, deal.updates)
+    // Se ESPERA a que el pedido quede guardado: el total que va a revisar el
+    // portero se calcula de lo que quedo en la ficha, no de lo que el modelo
+    // dice haber entendido.
+    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     // Texto final ya SIN marcas internas. Si el modelo respondió solo con
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso
@@ -289,13 +294,46 @@ export async function dispatchInboundToAiReply(
         ),
       ),
     )
+    // ---- EL PORTERO -------------------------------------------------------
+    // El precio deja de salir de lo que escriba el modelo. Se calcula con la
+    // caja registradora a partir del pedido guardado, y si el mensaje afirma
+    // otro numero no se manda: sale el desglose armado por codigo.
+    //
+    // No se reintenta con el modelo, porque volveria a inventar. Y si el
+    // pedido no se puede calcular, el portero solo cuida la cuenta bancaria y
+    // deja pasar el resto: una consulta de precios no se bloquea.
+    let textoAEnviar = finalText
     if (finalText) {
+      try {
+        const { data: filaPedido } = await db
+          .from('deals')
+          .select('carrito, combo_history')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const desglose = desgloseDelPedido(filaPedido)
+        const veredicto = revisarSalida(finalText, desglose)
+        if (!veredicto.ok) {
+          console.warn(
+            `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
+          )
+          textoAEnviar = desglose ? mensajeDeRespaldo(desglose) : finalText
+        }
+      } catch (err) {
+        // Un fallo del portero jamas deja al cliente sin respuesta.
+        console.error('[portero] no se pudo revisar la salida:', err)
+      }
+    }
+
+    if (textoAEnviar) {
       await engineSendText({
         accountId,
         userId: configOwnerUserId,
         conversationId,
         contactId,
-        text: finalText,
+        text: textoAEnviar,
         aiGenerated: true,
       })
     } else {
