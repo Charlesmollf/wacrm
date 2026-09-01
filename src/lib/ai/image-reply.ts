@@ -7,7 +7,7 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
-import { desgloseDelPedido } from './carrito'
+import { pedidoDelDeal, carritoDesdeMarca, guardarCarrito, cobrar } from './carrito'
 import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
@@ -329,6 +329,11 @@ export async function dispatchInboundImageToAiReply(
     // Se espera: el portero necesita el pedido ya guardado para calcular.
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
+    // El carrito que el modelo declaro en su mensaje: el pedido COMPLETO.
+    // Mismo trato que en la ruta de texto — el pedido es un dato, no una
+    // deduccion sobre una frase escrita en el historial.
+    const carritoDeclarado = carritoDesdeMarca(text)
+
     const finalText = enforceSuma(
       enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
     )
@@ -339,19 +344,44 @@ export async function dispatchInboundImageToAiReply(
       try {
         const { data: filaPedido } = await db
           .from('deals')
-          .select('carrito, combo_history')
+          .select('id, value, carrito, combo_history')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-        const desglose = desgloseDelPedido(filaPedido)
-        const veredicto = revisarSalida(finalText, desglose)
+
+        let desglose = null
+        let confiable = false
+        if (carritoDeclarado && filaPedido?.id) {
+          // El modelo declaro el pedido: se guarda como datos y manda el.
+          await guardarCarrito(db, filaPedido.id, carritoDeclarado)
+          desglose = cobrar(carritoDeclarado)
+          confiable = true
+          // Un solo total: la tarjeta y la caja nunca vuelven a discrepar.
+          if (desglose && Number(filaPedido.value ?? 0) !== desglose.total) {
+            await db
+              .from('deals')
+              .update({ value: desglose.total })
+              .eq('id', filaPedido.id)
+          }
+        } else {
+          const leido = pedidoDelDeal(filaPedido)
+          desglose = leido.desglose
+          confiable = leido.confiable
+        }
+
+        // El portero solo tapa un mensaje cuando confia en su propia cuenta.
+        // Con un pedido deducido de prosa se le pasa null: cuida la cuenta
+        // bancaria y deja pasar lo que escribio el modelo.
+        const veredicto = revisarSalida(finalText, confiable ? desglose : null)
         if (!veredicto.ok) {
           console.warn(
             `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
           )
-          textoAEnviar = desglose ? mensajeDeRespaldo(desglose, finalText) : finalText
+          if (confiable && desglose) {
+            textoAEnviar = mensajeDeRespaldo(desglose, finalText)
+          }
         }
       } catch (err) {
         console.error('[portero] no se pudo revisar la salida:', err)
