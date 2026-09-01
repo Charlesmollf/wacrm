@@ -8,7 +8,27 @@
 // bot escribia "Tres bolsas" y el codigo buscaba cifras (Yuri), o nombraba un
 // producto dos veces en la misma frase y se contaba doble (Isidro).
 //
-// Reglas:
+// El 1 de septiembre esa interpretacion volvio a fallar, y peor. Charles pidio
+// Intensa Dulzura con prensa, despues un Maracaturra, despues un Africa Mia.
+// El historial quedo en "Intensa Dulzura + prensa francesa + Maracaturra sin
+// accesorio" y el lector, al encontrar el combo, hacia `return` ahi mismo y
+// tiraba el resto. Cobraba Q490 para siempre. El portero comparaba el mensaje
+// del modelo contra ese Q490, no cuadraba, y reemplazaba la respuesta por el
+// desglose viejo. Tres veces seguidas el mismo cuadro. Al cliente le parecio
+// que el bot no sabia sumar; en realidad el bot estaba amordazado.
+//
+// Por eso ahora hay DOS caminos, y no valen lo mismo:
+//
+//   1. LA MARCA. El modelo declara el pedido COMPLETO en cada mensaje:
+//        [[CARRITO: 1 Intensa Dulzura con prensa francesa; 1 África Mía]]
+//      Eso se guarda como datos y es la fuente de verdad. `origen: 'marca'`.
+//
+//   2. LA PROSA. Si no hay marca ni carrito guardado, se interpreta el
+//      historial como antes. Sirve para los pedidos viejos, pero es una
+//      APROXIMACION: `origen: 'texto'`. Un desglose asi NUNCA puede tapar lo
+//      que escribio el modelo (ver `pedidoDelDeal` y el portero).
+//
+// Reglas que no cambian:
 //   - El carrito se REEMPLAZA completo, nunca se ajusta. Agregar o quitar algo
 //     produce un carrito nuevo y el total se recalcula desde cero.
 //   - `combo_history` no se toca: sigue siendo el historial de compras del
@@ -23,6 +43,13 @@ import { CATALOGO, VARIEDADES, sinAcentos } from './enforce-totales'
 export interface Carrito {
   items: ItemPedido[]
   accesorioSuelto: Accesorio
+  /**
+   * De donde salio este carrito.
+   *   'marca' → lo declaro el modelo pieza por pieza. Se le cree.
+   *   'texto' → se dedujo de una frase. Sirve para orientar, no para cobrar
+   *             por encima de lo que dijo el modelo.
+   */
+  origen?: 'marca' | 'texto'
 }
 
 export const CARRITO_VACIO: Carrito = { items: [], accesorioSuelto: 'ninguno' }
@@ -58,7 +85,7 @@ export function cuantasUnidades(trozo: string): number {
 export function leerCarrito(fila: { carrito?: unknown } | null | undefined): Carrito | null {
   const c = fila?.carrito
   if (!c || typeof c !== 'object') return null
-  const obj = c as { items?: unknown; accesorioSuelto?: unknown }
+  const obj = c as { items?: unknown; accesorioSuelto?: unknown; origen?: unknown }
   if (!Array.isArray(obj.items)) return null
   const items = obj.items.filter(
     (i): i is ItemPedido =>
@@ -72,81 +99,176 @@ export function leerCarrito(fila: { carrito?: unknown } | null | undefined): Car
     items,
     accesorioSuelto:
       acc === 'prensa' || acc === 'cafetera' ? acc : 'ninguno',
+    // Un carrito guardado sin sello es de los primeros; se trata como marca,
+    // porque solo se guardan los que el modelo declaro.
+    origen: obj.origen === 'texto' ? 'texto' : 'marca',
   }
+}
+
+const RE_PRENSA = /prensa\s*francesa|prensa/
+const RE_CAFETERA = /cafetera\s*italiana|cafetera|moka/
+
+/** Que accesorio nombra este trozo. */
+function accesorioDe(trozo: string): Accesorio {
+  if (RE_PRENSA.test(trozo)) return 'prensa'
+  if (RE_CAFETERA.test(trozo)) return 'cafetera'
+  return 'ninguno'
+}
+
+/** El combo que nombra este trozo, si nombra alguno. */
+function buscaCombo(trozo: string) {
+  // La cartera importada de Kommo escribe los nombres pegados y con la
+  // cantidad delante: "01ColososAmerica", "02MiticoCoban". Comparar sin
+  // espacios ni signos hace que esos entren igual que "Colosos de America".
+  const compacto = trozo.replace(/[^a-z0-9]/g, '')
+  return CATALOGO.find((c) =>
+    c.claves.some((k) => {
+      const kc = sinAcentos(k).replace(/[^a-z0-9]/g, '')
+      return trozo.includes(k) || (kc.length >= 5 && compacto.includes(kc))
+    }),
+  )
+}
+
+/**
+ * La variedad suelta que nombra este trozo.
+ *
+ * Gana el nombre MAS LARGO que coincida: "maracaturra" contiene "caturra" y
+ * "kenia sl28" contiene "kenia". Sin esta regla un Maracaturra se guardaba
+ * como Caturra, y una Kenia SL28 de Q200 se cobraba como Kenia.
+ */
+function buscaVariedad(trozo: string): [string, number] | undefined {
+  const compacto = trozo.replace(/[^a-z0-9]/g, '')
+  const candidatas = VARIEDADES.filter(([n]) => {
+    const nn = sinAcentos(n)
+    return trozo.includes(nn) || compacto.includes(nn.replace(/[^a-z0-9]/g, ''))
+  })
+  return candidatas.sort((a, b) => b[0].length - a[0].length)[0]
+}
+
+/**
+ * "caturra roja" -> "Caturra Roja".
+ *
+ * El catalogo guarda las variedades en minusculas para poder compararlas. Al
+ * cliente le llegaba asi tal cual, en medio de un desglose donde los combos si
+ * van con mayuscula. Se ve descuidado y es gratis arreglarlo.
+ */
+function conMayusculas(nombre: string): string {
+  return nombre
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    .replace(/\bSl(\d)/g, 'SL$1')
+}
+
+/**
+ * El corazon del lector: una lista de trozos -> un carrito.
+ *
+ * Recorre TODOS los trozos. Aca esta el arreglo de fondo del 1 de septiembre:
+ * antes, al encontrar un combo, devolvia ese combo y abandonaba el resto del
+ * texto. Un pedido de dos combos y una bolsa se cobraba como un solo combo.
+ */
+function carritoDeLista(bruto: string, origen: 'marca' | 'texto'): Carrito | null {
+  // La cartera de Kommo trae "Kennia" con doble n. Es Kenia SL28, y cuesta
+  // Q200: sin esto se cobraba como una bolsa comun.
+  const plano = sinAcentos(String(bruto ?? ''))
+    .replace(/^\[[^\]]*\]\s*/, '')
+    .replace(/kennia/g, 'kenia sl28')
+  if (!plano.trim()) return null
+
+  const trozos = plano.split(/[;+,\n]/).map((s) => s.trim()).filter(Boolean)
+
+  const items: ItemPedido[] = []
+  let accesorioSuelto: Accesorio = 'ninguno'
+
+  for (const trozo of trozos) {
+    // "sin accesorio" describe al producto anterior; no es un producto.
+    if (/^sin\s+accesorio/.test(trozo)) continue
+
+    const acc = accesorioDe(trozo)
+
+    const combo = buscaCombo(trozo)
+    if (combo) {
+      items.push({
+        tipo: 'combo',
+        nombre: combo.nombre,
+        cantidad: cuantasUnidades(trozo),
+        accesorio: acc,
+      })
+      continue
+    }
+
+    const variedad = buscaVariedad(trozo)
+    if (variedad) {
+      items.push({
+        tipo: 'bolsa',
+        nombre: conMayusculas(variedad[0]),
+        cantidad: cuantasUnidades(trozo),
+      })
+      continue
+    }
+
+    // Trozo que es SOLO un accesorio. Dos lecturas posibles, y la diferencia
+    // es de cien quetzales:
+    //   "Intensa Dulzura + prensa francesa" -> el combo va CON prensa (Q445).
+    //   "2 Pacamara + prensa francesa"      -> la prensa se compra aparte.
+    // Se pega al combo anterior cuando ese combo todavia no tiene accesorio;
+    // si no hay combo al que pegarse, es una compra suelta.
+    if (acc !== 'ninguno') {
+      const ultimo = items[items.length - 1]
+      if (ultimo && ultimo.tipo === 'combo' && (ultimo.accesorio ?? 'ninguno') === 'ninguno') {
+        ultimo.accesorio = acc
+      } else {
+        accesorioSuelto = acc
+      }
+    }
+  }
+
+  if (items.length === 0 && accesorioSuelto === 'ninguno') return null
+
+  // Un mismo producto nombrado en dos trozos se junta en una linea. Suma las
+  // cantidades: "1 Pacamara; 1 Pacamara" son dos bolsas.
+  const juntos = new Map<string, ItemPedido>()
+  for (const it of items) {
+    const llave = `${it.tipo}|${it.nombre}|${it.accesorio ?? 'ninguno'}`
+    const previo = juntos.get(llave)
+    if (previo) previo.cantidad += it.cantidad
+    else juntos.set(llave, { ...it })
+  }
+
+  return { items: [...juntos.values()], accesorioSuelto, origen }
+}
+
+/**
+ * El carrito que el modelo DECLARO en su mensaje.
+ *
+ * El modelo escribe, en cada respuesta donde haya pedido, el pedido entero:
+ *
+ *   [[CARRITO: 1 Intensa Dulzura con prensa francesa; 1 África Mía]]
+ *
+ * Entero, no el cambio. "Agregame un Maracaturra" no produce "1 Maracaturra":
+ * produce la lista completa otra vez. Asi el pedido nunca depende de que el
+ * codigo entienda una conversacion, que es justo lo que venia fallando.
+ *
+ * Devuelve null si el mensaje no trae marca.
+ */
+export function carritoDesdeMarca(texto: string | null | undefined): Carrito | null {
+  const m = String(texto ?? '').match(/\[\[\s*CARRITO\s*:([^\]]*)\]\]/i)
+  if (!m) return null
+  const cuerpo = m[1].trim()
+  // [[CARRITO: vacio]] es como el modelo dice "ya no hay pedido".
+  if (!cuerpo || /^(vacio|vacío|ninguno|nada)$/i.test(cuerpo)) {
+    return { ...CARRITO_VACIO, origen: 'marca' }
+  }
+  return carritoDeLista(cuerpo, 'marca')
 }
 
 /**
  * Traduce una descripcion de pedido al carrito, para los pedidos que vienen
- * del formato viejo o de la marca que manda el bot.
+ * del formato viejo (`combo_history`).
  *
  * Devuelve null cuando no reconoce nada: en ese caso se sigue como antes en
  * vez de inventar un pedido.
  */
 export function carritoDesdeTexto(texto: string | null | undefined): Carrito | null {
-  const plano = sinAcentos(String(texto ?? '')).replace(/^\[[^\]]*\]\s*/, '')
-  if (!plano.trim()) return null
-
-  const accesorioSuelto: Accesorio = /prensa\s*francesa/.test(plano)
-    ? 'prensa'
-    : /cafetera\s*italiana|moka/.test(plano)
-      ? 'cafetera'
-      : 'ninguno'
-
-  // La cartera importada de Kommo escribe los nombres pegados y con la
-  // cantidad delante: "01ColososAmerica", "02MiticoCoban". Comparar sin
-  // espacios ni signos hace que esos entren igual que "Colosos de America".
-  const compacto = plano.replace(/[^a-z0-9]/g, '')
-
-  // Un combo con nombre gana sobre las bolsas: su precio ya incluye el
-  // accesorio y no se suma aparte.
-  const combo = CATALOGO.find((c) =>
-    c.claves.some((k) => {
-      const kc = sinAcentos(k).replace(/[^a-z0-9]/g, '')
-      return plano.includes(k) || (kc.length >= 5 && compacto.includes(kc))
-    }),
-  )
-  if (combo) {
-    return {
-      items: [
-        {
-          tipo: 'combo',
-          nombre: combo.nombre,
-          cantidad: cuantasUnidades(plano),
-          accesorio: accesorioSuelto,
-        },
-      ],
-      accesorioSuelto: 'ninguno',
-    }
-  }
-
-  // Bolsas sueltas: se parte por "+" o coma y se cuenta cada trozo aparte, de
-  // modo que un producto nombrado dos veces en la misma frase no se duplique.
-  // La cartera de Kommo trae "Kennia" con doble n. Es Kenia SL28, y cuesta
-  // Q200: sin esto se cobraba como una bolsa comun.
-  const conAlias = plano.replace(/kennia/g, 'kenia sl28')
-  const trozos = conAlias.split(/[+,\n]/).map((s) => s.trim()).filter(Boolean)
-  const porNombre = new Map<string, number>()
-  for (const trozo of trozos) {
-    const trozoCompacto = trozo.replace(/[^a-z0-9]/g, '')
-    const variedad = VARIEDADES.find(([n]) => {
-      const nn = sinAcentos(n)
-      return trozo.includes(nn) || trozoCompacto.includes(nn.replace(/[^a-z0-9]/g, ''))
-    })
-    if (!variedad) continue
-    const nombre = variedad[0]
-    const cantidad = cuantasUnidades(trozo)
-    porNombre.set(nombre, (porNombre.get(nombre) ?? 0) + cantidad)
-  }
-  if (porNombre.size === 0) return null
-
-  return {
-    items: [...porNombre].map(([nombre, cantidad]) => ({
-      tipo: 'bolsa' as const,
-      nombre,
-      cantidad,
-    })),
-    accesorioSuelto,
-  }
+  return carritoDeLista(String(texto ?? ''), 'texto')
 }
 
 /** Guarda el carrito del pedido. Best-effort: nunca rompe la conversacion. */
@@ -171,14 +293,8 @@ export async function guardarCarrito(
   }
 }
 
-/**
- * El desglose del pedido en curso, o null si no hay carrito ni se pudo
- * reconstruir del historial. Null significa "seguir como antes".
- */
-export function desgloseDelPedido(
-  fila: { carrito?: unknown; combo_history?: string | null } | null | undefined,
-): Desglose | null {
-  const carrito = leerCarrito(fila) ?? carritoDesdeTexto(ultimaLinea(fila?.combo_history))
+/** Cobra un carrito. Null si el catalogo no reconoce algo. */
+export function cobrar(carrito: Carrito | null): Desglose | null {
   if (!carrito || carrito.items.length === 0) return null
   try {
     return calcularPedido(carrito.items, carrito.accesorioSuelto)
@@ -187,6 +303,35 @@ export function desgloseDelPedido(
     console.warn('[carrito] no se pudo calcular:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+/**
+ * El pedido de este cliente, y si se puede confiar en el.
+ *
+ * `confiable` es la pieza nueva y es la que evita el desastre del 1 de
+ * septiembre. Solo es true cuando el pedido salio de la marca del modelo. Un
+ * desglose deducido de prosa se devuelve igual —sirve para avisar en los
+ * logs— pero el portero tiene prohibido usarlo para tapar un mensaje.
+ */
+export function pedidoDelDeal(
+  fila: { carrito?: unknown; combo_history?: string | null } | null | undefined,
+): { desglose: Desglose | null; confiable: boolean } {
+  const guardado = leerCarrito(fila)
+  if (guardado && guardado.items.length > 0) {
+    return { desglose: cobrar(guardado), confiable: guardado.origen !== 'texto' }
+  }
+  const delTexto = carritoDesdeTexto(ultimaLinea(fila?.combo_history))
+  return { desglose: cobrar(delTexto), confiable: false }
+}
+
+/**
+ * El desglose del pedido en curso, o null si no hay carrito ni se pudo
+ * reconstruir del historial. Null significa "seguir como antes".
+ */
+export function desgloseDelPedido(
+  fila: { carrito?: unknown; combo_history?: string | null } | null | undefined,
+): Desglose | null {
+  return pedidoDelDeal(fila).desglose
 }
 
 /** El pedido de hoy es la ultima linea del historial. */
