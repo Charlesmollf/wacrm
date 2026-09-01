@@ -7,6 +7,8 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
+import { desgloseDelPedido } from './carrito'
+import { revisarSalida, mensajeDeRespaldo } from './portero'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -324,18 +326,45 @@ export async function dispatchInboundImageToAiReply(
     // matching image(s). Best-effort: a failed photo never loses the text.
     const deal = extractDealMarkers(text)
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
-    void applyDealUpdates(db, { accountId, contactId }, deal.updates)
+    // Se espera: el portero necesita el pedido ya guardado para calcular.
+    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     const finalText = enforceSuma(
       enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
     )
+    // El portero, igual que en la ruta de texto: el total sale de la caja,
+    // no de lo que el modelo haya escrito al mirar la foto.
+    let textoAEnviar = finalText
     if (finalText) {
+      try {
+        const { data: filaPedido } = await db
+          .from('deals')
+          .select('carrito, combo_history')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const desglose = desgloseDelPedido(filaPedido)
+        const veredicto = revisarSalida(finalText, desglose)
+        if (!veredicto.ok) {
+          console.warn(
+            `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
+          )
+          textoAEnviar = desglose ? mensajeDeRespaldo(desglose) : finalText
+        }
+      } catch (err) {
+        console.error('[portero] no se pudo revisar la salida:', err)
+      }
+    }
+
+    if (textoAEnviar) {
       await engineSendText({
         accountId,
         userId: configOwnerUserId,
         conversationId,
         contactId,
-        text: finalText,
+        text: textoAEnviar,
         aiGenerated: true,
       })
     } else {
