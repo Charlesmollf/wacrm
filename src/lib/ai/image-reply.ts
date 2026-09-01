@@ -1,3 +1,4 @@
+import type { Desglose } from './caja'
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
@@ -351,7 +352,7 @@ export async function dispatchInboundImageToAiReply(
           .limit(1)
           .maybeSingle()
 
-        let desglose = null
+        let desglose: Desglose | null = null
         let confiable = false
         if (carritoDeclarado && filaPedido?.id) {
           // El modelo declaro el pedido: se guarda como datos y manda el.
