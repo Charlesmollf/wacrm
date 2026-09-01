@@ -239,13 +239,27 @@ export function enforceAccesorios(texto: string): string {
   const combos = CATALOGO.filter((c) => c.claves.some((k) => plano.includes(k)))
   if (combos.length === 0) return texto
 
-  const lineas = combos.map(
-    (c) =>
-      `📌 *${c.nombre}*: solo Q${c.solo} · con prensa francesa Q${c.prensa} · con cafetera italiana Q${c.cafetera}`,
-  )
+  // La aclaracion va UNA SOLA VEZ al final, no una por combo.
+  //
+  // Antes se agregaba una linea de tres precios por cada combo nombrado: en un
+  // mensaje con cinco combos eran quince precios y quedaba un muro de texto
+  // que nadie lee (le paso a "The Last Of The Moicain").
+  //
+  // Con UN combo el detalle sirve y es corto, asi que se deja. Con varios se
+  // pone una sola linea sin precios: el recargo del accesorio NO es parejo
+  // entre combos (Procesos Secretos con prensa sube Q20, Africa Mia con
+  // cafetera sube Q145), asi que dar un "+Q100" generico seria mentir.
+  if (combos.length === 1) {
+    const c = combos[0]
+    return (
+      texto.trimEnd() +
+      `\n\n¿Lo desea con accesorio? (precios sin envío; se suman Q${ENVIO} al total)\n` +
+      `📌 *${c.nombre}*: solo Q${c.solo} · con prensa francesa Q${c.prensa} · con cafetera italiana Q${c.cafetera}`
+    )
+  }
   return (
     texto.trimEnd() +
-    `\n\n¿Lo desea con accesorio? (estos precios son sin envío; se suman Q${ENVIO} al total)\n` +
-    lineas.join('\n')
+    `\n\n☕ Cualquiera de estos combos puede llevar prensa francesa o cafetera italiana. ` +
+    `Dígame cuál le interesa y le paso el precio exacto. (Los precios son sin envío; se suman Q${ENVIO}.)`
   )
 }
