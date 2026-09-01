@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { buildCustomerFile } from './customer-file'
@@ -13,7 +14,7 @@ import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { enforceTotales, enforceAccesorios } from './enforce-totales'
-import { desgloseDelPedido } from './carrito'
+import { pedidoDelDeal, carritoDesdeMarca, guardarCarrito, cobrar } from './carrito'
 import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
 
 interface DispatchArgs {
@@ -90,7 +91,9 @@ export async function dispatchInboundToAiReply(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select(
+        'assigned_agent_id, ai_autoreply_disabled, ai_reply_count, portero_frenadas',
+      )
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
@@ -283,6 +286,17 @@ export async function dispatchInboundToAiReply(
     // dice haber entendido.
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
+    // EL CARRITO QUE DECLARO EL MODELO.
+    //
+    // En cada mensaje donde hay pedido, el modelo escribe el pedido COMPLETO:
+    //   [[CARRITO: 1 Intensa Dulzura con prensa francesa; 1 África Mía]]
+    //
+    // Antes el codigo tenia que deducir el pedido de una frase guardada en
+    // `combo_history`. El 1 de septiembre dedujo mal: se quedaba con el primer
+    // combo y cobraba Q490 por mas cafes que agregara el cliente. Deducir una
+    // conversacion es adivinar; que el modelo lo declare es un dato.
+    const carritoDeclarado = carritoDesdeMarca(text)
+
     // Texto final ya SIN marcas internas. Si el modelo respondió solo con
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso
     // NO se envía nada. Antes el respaldo mandaba el texto crudo y el
@@ -295,31 +309,74 @@ export async function dispatchInboundToAiReply(
       ),
     )
     // ---- EL PORTERO -------------------------------------------------------
-    // El precio deja de salir de lo que escriba el modelo. Se calcula con la
-    // caja registradora a partir del pedido guardado, y si el mensaje afirma
-    // otro numero no se manda: sale el desglose armado por codigo.
+    // El precio deja de salir de lo que escriba el modelo: lo calcula la caja
+    // registradora a partir del carrito, y si el mensaje afirma otro numero
+    // sale el desglose armado por codigo.
     //
-    // No se reintenta con el modelo, porque volveria a inventar. Y si el
-    // pedido no se puede calcular, el portero solo cuida la cuenta bancaria y
-    // deja pasar el resto: una consulta de precios no se bloquea.
+    // La regla que faltaba: el portero SOLO tapa un mensaje cuando confia en su
+    // propia cuenta. Si el pedido se dedujo de prosa, `confiable` es false y al
+    // portero se le pasa null: cuida la cuenta bancaria y deja pasar el resto.
+    // Sin esa regla, un carrito mal leido amordazaba al modelo y el cliente
+    // recibia el mismo cuadro con el total viejo una y otra vez.
     let textoAEnviar = finalText
     if (finalText) {
       try {
         const { data: filaPedido } = await db
           .from('deals')
-          .select('carrito, combo_history')
+          .select('id, value, carrito, combo_history')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-        const desglose = desgloseDelPedido(filaPedido)
-        const veredicto = revisarSalida(finalText, desglose)
+
+        let desglose = null
+        let confiable = false
+
+        if (carritoDeclarado && filaPedido?.id) {
+          // El modelo declaro el pedido: se guarda como datos y manda el.
+          await guardarCarrito(db, filaPedido.id, carritoDeclarado)
+          desglose = cobrar(carritoDeclarado)
+          confiable = true
+          // UN SOLO TOTAL en todo el sistema. La tarjeta llego a decir Q890
+          // mientras la caja decia Q490: el cliente y la tostaduria leian
+          // numeros distintos del mismo pedido.
+          if (desglose && Number(filaPedido.value ?? 0) !== desglose.total) {
+            await db
+              .from('deals')
+              .update({ value: desglose.total })
+              .eq('id', filaPedido.id)
+          }
+        } else {
+          const leido = pedidoDelDeal(filaPedido)
+          desglose = leido.desglose
+          confiable = leido.confiable
+        }
+
+        const veredicto = revisarSalida(finalText, confiable ? desglose : null)
         if (!veredicto.ok) {
-          console.warn(
-            `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
+          if (confiable && desglose) {
+            console.warn(
+              `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
+            )
+            textoAEnviar = mensajeDeRespaldo(desglose, finalText)
+          } else {
+            console.warn(
+              `[portero] aviso sin frenar (${veredicto.motivo}): el pedido no es confiable, pasa el texto del modelo.`,
+            )
+          }
+          await anotarFrenada(
+            db,
+            conversationId,
+            Number(conv.portero_frenadas ?? 0) + 1,
+            config.handoffAgentId,
           )
-          textoAEnviar = desglose ? mensajeDeRespaldo(desglose, finalText) : finalText
+        } else if (Number(conv.portero_frenadas ?? 0) > 0) {
+          // Un mensaje limpio borra la cuenta: solo importan las seguidas.
+          await db
+            .from('conversations')
+            .update({ portero_frenadas: 0 })
+            .eq('id', conversationId)
         }
       } catch (err) {
         // Un fallo del portero jamas deja al cliente sin respuesta.
@@ -367,9 +424,44 @@ export async function dispatchInboundToAiReply(
 }
 
 /**
+ * Anota que el portero tuvo que intervenir, y a la SEGUNDA seguida entrega la
+ * conversacion a una persona.
+ *
+ * Una frenada aislada es el sistema haciendo su trabajo. Dos seguidas quieren
+ * decir que el modelo y el pedido guardado no se ponen de acuerdo, y ahi el
+ * cliente empieza a recibir el mismo cuadro repetido — que fue exactamente lo
+ * que paso el 1 de septiembre: tres veces "TOTAL: Q490" ante un cliente que
+ * pedia mas cafe. Un bot atascado repitiendose es peor que no responder.
+ */
+async function anotarFrenada(
+  db: SupabaseClient,
+  conversationId: string,
+  veces: number,
+  handoffAgentId: string | null | undefined,
+): Promise<void> {
+  try {
+    const update: Record<string, unknown> = { portero_frenadas: veces }
+    if (veces >= 2) {
+      update.ai_autoreply_disabled = true
+      update.ai_handoff_summary =
+        'El portero freno dos respuestas seguidas: lo que escribio el modelo no ' +
+        'cuadra con el pedido guardado. Revisar el carrito del cliente antes de ' +
+        'seguir respondiendo.'
+      if (handoffAgentId) update.assigned_agent_id = handoffAgentId
+      console.warn(
+        '[portero] dos frenadas seguidas: la conversacion pasa a una persona.',
+      )
+    }
+    await db.from('conversations').update(update).eq('id', conversationId)
+  } catch (err) {
+    console.error('[portero] no se pudo anotar la frenada:', err)
+  }
+}
+
+/**
  * Red de seguridad: quita cualquier marca interna que se haya escapado
- * ([[SET: ...]], [[IMG: ...]], [[HANDOFF]]). El cliente jamás debe ver
- * estas marcas — son instrucciones internas del sistema.
+ * ([[SET: ...]], [[IMG: ...]], [[CARRITO: ...]], [[HANDOFF]]). El cliente
+ * jamás debe ver estas marcas — son instrucciones internas del sistema.
  */
 function stripInternalMarkers(text: string): string {
   return text
