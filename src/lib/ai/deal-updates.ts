@@ -42,7 +42,12 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   'REGLA DEL ENVIO (critica): los precios del catalogo son SIN ENVIO. TODO pedido paga Q45 de envio, uno solo por pedido. El total que le das al cliente y el que mandas en total= ' +
   'SIEMPRE es precio del cafe + Q45. Ejemplos: Africa Mia con cafetera italiana Q545 -> total=590. Africa Mia sola Q400 -> total=445. Mitico Coban Q345 -> total=390. Una bolsa de Q120 -> total=165. ' +
   'Nunca des como total el precio pelado del catalogo: si el numero que ibas a decir aparece tal cual en el catalogo, te falto sumar el envio. ' +
-  'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones.'
+  'Esta marca es INVISIBLE para el cliente; el sistema la guarda en su ficha automaticamente. Nunca la expliques, la muestres ni la menciones. ' +
+  'CARRITO (INVISIBLE, OBLIGATORIA SIEMPRE QUE HAYA PEDIDO EN CURSO): agrega ademas esta segunda marca al final: ' +
+  '[[CARRITO: cantidad producto accesorio; cantidad producto accesorio]]. ' +
+  'Escribe el pedido COMPLETO cada vez, NO solo lo que acaba de cambiar. Si el cliente ya tenia un Intensa Dulzura con prensa y ahora agrega un Maracaturra, la marca es [[CARRITO: 1 Intensa Dulzura con prensa francesa; 1 Maracaturra]]. ' +
+  'Separa cada producto con punto y coma. El accesorio va pegado al combo que lo lleva ("con prensa francesa" o "con cafetera italiana"); un combo que va solo no lleva nada. Si el cliente se queda sin pedido, escribe [[CARRITO: vacio]]. ' +
+  'El sistema calcula el TOTAL a partir de ESTA marca: si le falta un producto, al cliente se le cobra de menos y la tostaduria le manda un pedido incompleto. Es invisible: nunca la expliques ni la menciones.'
 
 const MARKER = /\[\[\s*SET\s*:\s*([^\]]*?)\s*\]\]/gi
 
