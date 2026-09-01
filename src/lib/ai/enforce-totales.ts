@@ -49,7 +49,7 @@ export const CATALOGO: Combo[] = [
  * El orden importa: las claves largas van primero para que
  * "kenia sl28" gane sobre "kenia" y "caturra roja" sobre "caturra".
  */
-const VARIEDADES: [string, number][] = [
+export const VARIEDADES: [string, number][] = [
   ['caturra roja', 120],
   ['kenia sl28', 200],
   ['bourbon', 120],
