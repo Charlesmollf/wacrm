@@ -8,7 +8,7 @@ import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
 import { desgloseDelPedido } from './carrito'
-import { revisarSalida, mensajeDeRespaldo } from './portero'
+import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -357,6 +357,9 @@ export async function dispatchInboundImageToAiReply(
         console.error('[portero] no se pudo revisar la salida:', err)
       }
     }
+
+    // El formato que WhatsApp entiende, al final de todo.
+    textoAEnviar = formatoWhatsApp(textoAEnviar)
 
     if (textoAEnviar) {
       await engineSendText({
