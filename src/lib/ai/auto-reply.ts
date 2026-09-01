@@ -319,7 +319,7 @@ export async function dispatchInboundToAiReply(
           console.warn(
             `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
           )
-          textoAEnviar = desglose ? mensajeDeRespaldo(desglose) : finalText
+          textoAEnviar = desglose ? mensajeDeRespaldo(desglose, finalText) : finalText
         }
       } catch (err) {
         // Un fallo del portero jamas deja al cliente sin respuesta.
