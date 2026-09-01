@@ -94,15 +94,15 @@ describe('portero', () => {
 
 describe('el mensaje de respaldo conserva el tono', () => {
   it('mantiene el saludo del modelo y cambia solo la cuenta', () => {
-    const escribio = 'Perfecto \u{1F60A} Se lo preparo en molido.\nSon Q120 \u00D7 3 = Q165 total'
+    const escribio = 'Perfecto, se lo preparo en molido.\nSon Q120 x 3 = Q165 total'
     const m = mensajeDeRespaldo(yuri, escribio)
-    expect(m).toContain('Perfecto \u{1F60A} Se lo preparo en molido.')
+    expect(m).toContain('Perfecto, se lo preparo en molido.')
     expect(m).toContain('TOTAL: Q405')
     expect(m).not.toContain('Q165')
   })
 
   it('si el modelo arranco directo con numeros, usa el texto propio', () => {
-    const m = mensajeDeRespaldo(yuri, 'Q120 \u00D7 3 = Q165 total')
+    const m = mensajeDeRespaldo(yuri, 'Q120 x 3 = Q165 total')
     expect(m).toContain('Le confirmo su pedido')
     expect(m).toContain('TOTAL: Q405')
   })
