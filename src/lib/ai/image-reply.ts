@@ -351,7 +351,7 @@ export async function dispatchInboundImageToAiReply(
           console.warn(
             `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
           )
-          textoAEnviar = desglose ? mensajeDeRespaldo(desglose) : finalText
+          textoAEnviar = desglose ? mensajeDeRespaldo(desglose, finalText) : finalText
         }
       } catch (err) {
         console.error('[portero] no se pudo revisar la salida:', err)
