@@ -14,7 +14,7 @@ import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { enforceTotales, enforceAccesorios } from './enforce-totales'
 import { desgloseDelPedido } from './carrito'
-import { revisarSalida, mensajeDeRespaldo } from './portero'
+import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -326,6 +326,11 @@ export async function dispatchInboundToAiReply(
         console.error('[portero] no se pudo revisar la salida:', err)
       }
     }
+
+    // Ultimo paso antes de salir: el formato que WhatsApp entiende.
+    // Va aqui, despues del portero, para que tambien limpie el mensaje de
+    // respaldo y no quede un asterisco pegado a nada.
+    textoAEnviar = formatoWhatsApp(textoAEnviar)
 
     if (textoAEnviar) {
       await engineSendText({
