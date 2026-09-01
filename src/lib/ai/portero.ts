@@ -114,9 +114,36 @@ export function revisarSalida(texto: string, desglose: Desglose | null): Veredic
 }
 
 /**
- * El mensaje que sale cuando el portero rechaza: el desglose de la caja, tal
- * cual, sin nada que el modelo haya podido tocar.
+ * La parte conversacional del mensaje: lo que el modelo escribio ANTES de
+ * empezar a dar numeros.
+ *
+ * Sirve para que, cuando el portero frena un mensaje, al cliente no le llegue
+ * una tabla seca: se conserva el saludo y el reconocimiento ("Perfecto, se lo
+ * preparo en molido") y solo se reemplaza la cuenta.
  */
-export function mensajeDeRespaldo(d: Desglose): string {
-  return `Le confirmo su pedido:\n\n${textoDelDesglose(d)}`
+export function parteConversacional(texto: string): string {
+  const lineas = texto.split('\n')
+  const buenas: string[] = []
+  for (const linea of lineas) {
+    // En cuanto aparece una cifra en quetzales empieza la cuenta: ahi se corta.
+    if (/Q\s*\d{2,5}/i.test(linea)) break
+    buenas.push(linea)
+  }
+  const limpio = buenas.join('\n').trim()
+  // Una frase suelta muy corta ("Perfecto") no aporta; mejor el texto propio.
+  return limpio.length >= 8 ? limpio : ''
+}
+
+/**
+ * El mensaje que sale cuando el portero rechaza.
+ *
+ * El desglose viene de la caja y no lo toca nadie. Lo conversacional se
+ * conserva del modelo cuando existe, para que el cliente no reciba un cuadro
+ * seco despues de una conversacion normal.
+ */
+export function mensajeDeRespaldo(d: Desglose, textoOriginal?: string): string {
+  const saludo = textoOriginal ? parteConversacional(textoOriginal) : ''
+  const cuenta = textoDelDesglose(d)
+  if (saludo) return `${saludo}\n\n${cuenta}`
+  return `Le confirmo su pedido:\n\n${cuenta}`
 }
