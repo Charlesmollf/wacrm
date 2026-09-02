@@ -60,12 +60,20 @@ export async function buildCustomerFile(
         .maybeSingle(),
     ])
 
-    const ultimoCombo =
-      String(deal?.combo_history ?? '')
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .pop() ?? ''
+    const lineasCombo = String(deal?.combo_history ?? '')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+    const ultimoCombo = lineasCombo[lineasCombo.length - 1] ?? ''
+    // HISTORIAL DE COMPRAS: `combo_history` acumula una linea por cada
+    // recompra (fecha + producto), pero antes solo se usaba la ULTIMA
+    // linea — el modelo nunca veia que el cliente ya habia comprado otros
+    // cafes antes. Un cliente de anios (Kommo trae compras viejas) llegaba
+    // a la conversacion como si fuera la primera vez. Se le pasan hasta
+    // las ultimas 12 lineas (mas que eso ya no cabe comodo en el prompt y
+    // no aporta: lo que importa es que sepa QUE tomo antes, no la lista
+    // entera de anios).
+    const historialCompras = lineasCombo.slice(-12).slice(0, -1) // sin repetir "producto"
 
     const tiene: Record<string, string> = {}
     // NOMBRE DEL CLIENTE
@@ -128,7 +136,9 @@ export async function buildCustomerFile(
     if (Object.keys(tiene).length === 0 && !historial) return vacio
 
     const lineas = Object.entries(tiene).map(([k, v]) => `- ${k}: ${v}`)
-    if (historial) lineas.push(`- historial: ${historial}`)
+    if (historialCompras.length > 0)
+      lineas.push(`- compras anteriores de este cliente: ${historialCompras.join('; ')}`)
+    if (historial) lineas.push(`- historial (notas de Kommo): ${historial}`)
 
     const context =
       `\n\n=== FICHA DE ESTE CLIENTE (ya la tenemos guardada) ===\n` +
@@ -163,7 +173,9 @@ export async function buildCustomerFile(
       `7. Si el cliente da un dato distinto al que teniamos (direccion, forma de pago, estado), el NUEVO manda: usalo y guardalo.\n` +
       `8. El NOMBRE es obligatorio para cerrar. Si arriba dice "SIN CONFIRMAR", ese nombre viene del perfil de WhatsApp\n` +
       `   y NO sirve para rotular la guia de envio: confirmalo en una linea ("¿A nombre de quien preparo el pedido?")\n` +
-      `   ANTES de dar el total. Sin nombre confirmado no mandes el resumen ni cierres el pedido.\n`
+      `   ANTES de dar el total. Sin nombre confirmado no mandes el resumen ni cierres el pedido.\n` +
+      `9. Si el cliente pregunta que ha comprado antes, usa UNICAMENTE la lista de "compras anteriores" de arriba\n` +
+      `   (nunca inventes un cafe que no este ahi). Si no hay lista, dilo: no tenemos compras anteriores registradas.\n`
 
     return { context, missing: [...missing] }
   } catch {
