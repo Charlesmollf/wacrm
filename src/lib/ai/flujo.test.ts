@@ -55,4 +55,15 @@ describe('de punta a punta: las conversaciones que cobraron mal', () => {
     const consulta = 'El Mítico Cobán cuesta Q345, con prensa Q445 y con cafetera Q545'
     expect(revisarSalida(consulta)).toEqual({ ok: true })
   })
+
+  it('Sara Elena: el bot hace la cuenta en una frase y dice Q390 (el total real es Q510)', () => {
+    const t =
+      '*Intensa Dulzura* Q345 + *1 Peaberry* Q120 = Q345 + Q45 de envío = *Q390 total*'
+    const v = revisarSalida(t)
+    expect(v.ok).toBe(false)
+    // No se suma a ciegas: el propio mensaje trae un resultado parcial
+    // ("= Q345") mezclado entre los montos, asi que sumar todo daria OTRO
+    // numero mal. Se bloquea sin `corregido` y pasa a una persona.
+    expect(v.corregido).toBeUndefined()
+  })
 })
