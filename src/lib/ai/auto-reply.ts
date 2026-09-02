@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Desglose } from './caja'
+import { textoDelDesglose } from './caja'
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { buildCustomerFile } from './customer-file'
@@ -202,7 +203,8 @@ export async function dispatchInboundToAiReply(
         messages,
       })
     }
-    const { text, handoff, usage } = reply
+    let { text, handoff } = reply
+    const { usage } = reply
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`
@@ -217,6 +219,92 @@ export async function dispatchInboundToAiReply(
       model: config.model,
       usage,
     })
+
+    // ---- RED DE SEGURIDAD DE LA MARCA [[CARRITO: ...]] ---------------------
+    // El prompt le exige al modelo declarar el pedido COMPLETO en cada mensaje
+    // donde haya un pedido en curso (ver carrito.ts). En la practica, con un
+    // modelo chico (Haiku) y una peticion en tono de pregunta ("Quisiera ver
+    // si me pueden agregar un gesha"), el modelo a veces responde sin la
+    // marca: el codigo entonces no tiene forma de saber que el pedido cambio,
+    // el portero compara contra el carrito VIEJO, no cuadra, y el cliente
+    // recibe de vuelta su pedido anterior como si el pedido de agregar algo
+    // se hubiera ignorado.
+    //
+    // Antes de dejar que el portero lo tape, se le da al modelo UNA sola
+    // oportunidad de corregirse: si el cliente esta claramente pidiendo un
+    // cambio de pedido y la respuesta no trae la marca, se reintenta con un
+    // recordatorio explicito.
+    //
+    // Si el reintento TAMPOCO la trae, el bot NO se rinde ni molesta a Jefe:
+    // le pregunta al cliente directamente cual es el cambio exacto que quiere
+    // (con el pedido actual como referencia, para que el cliente vea de donde
+    // parte), y la conversacion sigue sola. Nada de esto va al modelo: es
+    // texto armado por codigo a partir del carrito guardado, asi que no
+    // inventa numeros. La proxima respuesta del cliente vuelve a pasar por
+    // este mismo camino con normalidad.
+    if (text && !handoff && !MARCA_CARRITO.test(text)) {
+      const ultimoCliente = [...messages].reverse().find((m) => m.role === 'user')
+      if (ultimoCliente && RE_PEDIDO_CAMBIA.test(ultimoCliente.content)) {
+        try {
+          const { data: filaPrevia } = await db
+            .from('deals')
+            .select('carrito, combo_history')
+            .eq('account_id', accountId)
+            .eq('contact_id', contactId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          const previo = pedidoDelDeal(filaPrevia)
+          if (previo.confiable && previo.desglose) {
+            const recordatorio =
+              '\n\nRECORDATORIO (el sistema detecto que falto en tu ultima respuesta): el cliente esta pidiendo ' +
+              'un cambio a un pedido que YA esta en curso (agregar, quitar o cambiar un producto) y tu respuesta ' +
+              'no incluyo la marca [[CARRITO: ...]]. Volve a escribir la respuesta completa e incluye, al final, ' +
+              '[[CARRITO: ...]] con el pedido ACTUALIZADO Y COMPLETO: todo lo que el cliente ya tenia, mas el ' +
+              'cambio que acaba de pedir. La marca es obligatoria siempre que haya un pedido en curso.'
+            const reintento = await generateReply({
+              config,
+              systemPrompt: systemPrompt + recordatorio,
+              cachePrefix: stableSystem,
+              messages,
+            })
+            void logAiUsage(db, {
+              accountId,
+              conversationId,
+              mode: 'auto_reply',
+              provider: config.provider,
+              model: config.model,
+              usage: reintento.usage,
+            })
+            if (reintento.text && MARCA_CARRITO.test(reintento.text)) {
+              text = reintento.text
+              handoff = reintento.handoff
+            } else {
+              console.warn(
+                '[ai auto-reply] reintento de [[CARRITO]] tampoco trajo la marca; le pregunto al cliente.',
+              )
+              const { data: claimado } = await db.rpc('claim_ai_reply_slot', {
+                conversation_id: conversationId,
+                max_replies: config.autoReplyMaxPerConversation,
+              })
+              if (claimado === true) {
+                await engineSendText({
+                  accountId,
+                  userId: configOwnerUserId,
+                  conversationId,
+                  contactId,
+                  text: preguntaDeConfirmacion(previo.desglose),
+                  aiGenerated: true,
+                })
+              }
+              return
+            }
+          }
+        } catch (err) {
+          console.error('[ai auto-reply] no se pudo reintentar por falta de [[CARRITO]]:', err)
+        }
+      }
+    }
 
     if (handoff || !text) {
       // The model can't (or shouldn't) answer — stop auto-replying on
@@ -240,6 +328,18 @@ export async function dispatchInboundToAiReply(
         update.assigned_agent_id = config.handoffAgentId
       }
       await db.from('conversations').update(update).eq('id', conversationId)
+
+      // El cliente no debe quedarse viendo el visto sin respuesta: antes
+      // este camino no mandaba nada y el cliente no tenia forma de saber
+      // que alguien iba a seguir la conversacion. Un aviso corto y fijo
+      // (no pasa por el modelo ni por el portero: no hay numeros que
+      // pueda inventar) alcanza para eso.
+      await enviarAvisoDeHandoff({
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+      })
 
       // Email the owner the moment the AI hands the thread to a human —
       // the exact instant the conversation becomes "assigned" — so they
@@ -358,20 +458,25 @@ export async function dispatchInboundToAiReply(
         if (!veredicto.ok) {
           if (confiable && desglose) {
             console.warn(
-              `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
+              `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo + pregunta de confirmacion.`,
             )
-            textoAEnviar = mensajeDeRespaldo(desglose, finalText)
+            // El desglose SI es de fiar (salio del carrito recien guardado):
+            // se manda el numero correcto, pero como algo no cuadro se le
+            // pide al cliente que lo confirme en vez de darlo por cerrado a
+            // ciegas. El cliente responde y la conversacion sigue sola.
+            textoAEnviar =
+              mensajeDeRespaldo(desglose, finalText) + '\n\n¿Así se lo dejo confirmado?'
           } else {
             console.warn(
               `[portero] aviso sin frenar (${veredicto.motivo}): el pedido no es confiable, pasa el texto del modelo.`,
             )
           }
-          await anotarFrenada(
-            db,
-            conversationId,
-            Number(conv.portero_frenadas ?? 0) + 1,
-            config.handoffAgentId,
-          )
+          // Solo queda registrado para revisar despues; YA NO apaga el
+          // auto-reply ni avisa a Jefe. Dos o mas frenadas seguidas quieren
+          // decir que el pedido se puso complicado, y ahi el bot sigue
+          // preguntando hasta que el cliente lo aclare — no se lo entrega a
+          // una persona por su cuenta.
+          await anotarFrenada(db, conversationId, Number(conv.portero_frenadas ?? 0) + 1)
         } else if (Number(conv.portero_frenadas ?? 0) > 0) {
           // Un mensaje limpio borra la cuenta: solo importan las seguidas.
           await db
@@ -425,37 +530,79 @@ export async function dispatchInboundToAiReply(
 }
 
 /**
- * Anota que el portero tuvo que intervenir, y a la SEGUNDA seguida entrega la
- * conversacion a una persona.
- *
- * Una frenada aislada es el sistema haciendo su trabajo. Dos seguidas quieren
- * decir que el modelo y el pedido guardado no se ponen de acuerdo, y ahi el
- * cliente empieza a recibir el mismo cuadro repetido — que fue exactamente lo
- * que paso el 1 de septiembre: tres veces "TOTAL: Q490" ante un cliente que
- * pedia mas cafe. Un bot atascado repitiendose es peor que no responder.
+ * Anota que el portero tuvo que intervenir. Solo lleva la cuenta para que
+ * quede en el registro (`portero_frenadas`) — NO apaga el auto-reply ni
+ * avisa a Jefe. El bot sigue solo: cuando el portero frena, la respuesta que
+ * sale ya trae una pregunta de confirmacion (ver mas arriba) o, si no hay
+ * carrito de fiar, se le pide al cliente que aclare el cambio exacto. La
+ * cuenta se resetea sola en cuanto un mensaje pasa limpio.
  */
 async function anotarFrenada(
   db: SupabaseClient,
   conversationId: string,
   veces: number,
-  handoffAgentId: string | null | undefined,
 ): Promise<void> {
   try {
-    const update: Record<string, unknown> = { portero_frenadas: veces }
-    if (veces >= 2) {
-      update.ai_autoreply_disabled = true
-      update.ai_handoff_summary =
-        'El portero freno dos respuestas seguidas: lo que escribio el modelo no ' +
-        'cuadra con el pedido guardado. Revisar el carrito del cliente antes de ' +
-        'seguir respondiendo.'
-      if (handoffAgentId) update.assigned_agent_id = handoffAgentId
-      console.warn(
-        '[portero] dos frenadas seguidas: la conversacion pasa a una persona.',
-      )
-    }
-    await db.from('conversations').update(update).eq('id', conversationId)
+    await db
+      .from('conversations')
+      .update({ portero_frenadas: veces })
+      .eq('id', conversationId)
   } catch (err) {
     console.error('[portero] no se pudo anotar la frenada:', err)
+  }
+}
+
+/**
+ * La pregunta que el bot le hace al cliente cuando no logro (ni al segundo
+ * intento) declarar el cambio de pedido con la marca [[CARRITO: ...]]. Texto
+ * FIJO armado con el desglose ya guardado — no pasa por el modelo, asi que
+ * no inventa productos ni totales. El cliente responde y el flujo normal
+ * retoma desde ahi.
+ */
+export function preguntaDeConfirmacion(actual: Desglose): string {
+  return (
+    'Para no equivocarme, esto es lo que tengo anotado ahorita de su pedido:\n\n' +
+    textoDelDesglose(actual) +
+    '\n\n¿Me puede confirmar exactamente qué cambio quiere hacer sobre esto?'
+  )
+}
+
+/** El pedido en curso trae la marca [[CARRITO: ...]] en algun lado del texto. */
+export const MARCA_CARRITO = /\[\[\s*CARRITO\s*:/i
+
+/**
+ * El cliente esta pidiendo un cambio a un pedido que ya existe: agregar,
+ * quitar, sumar o cambiar un producto. No necesita ser una orden tajante —
+ * "Quisiera ver si me pueden agregar un gesha" cuenta igual que "Agregue un
+ * gesha": las dos son una peticion de cambio, y las dos deben producir
+ * [[CARRITO: ...]]. Falsos positivos son baratos (un reintento de mas);
+ * falsos negativos son el bug que reporto el cliente.
+ */
+export const RE_PEDIDO_CAMBIA =
+  /\b(agreg\w*|a[ñn]ad\w*|sum\w*|incluy\w*|quit\w*|elimin\w*|sac\w*(?:\s+el|\s+la|\s+un|\s+una)|cambi\w*|reemplaz\w*|sustituy\w*|en vez de|en lugar de|mejor\s+(un|una|el|la))\b/i
+
+/**
+ * El aviso que le llega al cliente cuando la conversacion pasa a una
+ * persona (por handoff explicito del modelo o por dos frenadas seguidas
+ * del portero). Es texto FIJO — no pasa por el modelo ni por el portero —
+ * porque no tiene precios ni cuentas que pueda inventar, y porque antes
+ * este camino no mandaba nada: el cliente se quedaba viendo el visto sin
+ * saber que alguien iba a seguir la conversacion.
+ */
+async function enviarAvisoDeHandoff(args: {
+  accountId: string
+  userId: string
+  conversationId: string
+  contactId: string
+}): Promise<void> {
+  try {
+    await engineSendText({
+      ...args,
+      text: 'Ya anoté todo 🙌 En un momento se une alguien de nuestro equipo para seguir ayudándole con esto.',
+      aiGenerated: true,
+    })
+  } catch (err) {
+    console.error('[ai auto-reply] no se pudo avisar el handoff al cliente:', err)
   }
 }
 
