@@ -96,6 +96,24 @@ const RE_LINEA =
 /** La linea "*TOTAL: Qmonto*", la primera que aparezca. */
 const RE_TOTAL = /total\s*(?:a\s*(?:pagar|transferir))?\s*[:=]?\s*\**\s*Q[ \t]*(\d{1,6})/i
 
+/**
+ * Un total afirmado AL REVES, el monto antes de la palabra: "Q390 total" en
+ * vez de "total: Q390". El 2 de septiembre el bot escribio el total asi
+ * ("...= *Q390 total*") y `RE_TOTAL` no lo reconocio.
+ */
+const RE_TOTAL_INVERTIDO = /\*?Q[ \t]*(\d{1,6})\*?[ \t]*total\b/i
+
+/**
+ * Cuenta cuantos "Qmonto" aparecen en todo el texto, sin importar el
+ * formato. Sirve para notar cuando el mensaje hace una cuenta DENTRO de una
+ * sola frase ("Q345 + Q120 = Q345 + Q45 = Q390 total") que `leerLineas` no
+ * puede separar en lineas porque no usa el formato "Producto — Qmonto".
+ */
+function contarMontos(texto: string): number {
+  const m = texto.match(/Q[ \t]*\d{1,6}/g)
+  return m ? m.length : 0
+}
+
 interface LineaEncontrada {
   /** null = producto que el catalogo no reconoce; no se juzga su precio. */
   esperado: number | null
@@ -201,10 +219,25 @@ export function revisarSalida(texto: string): Veredicto {
     return { ok: false, motivo: 'menciona una cuenta que no es la oficial' }
   }
 
-  // 2. Lineas del desglose. Sin ninguna, no hay nada que revisar: es charla
-  // o una explicacion de precios ("Con prensa serían Q445"), no un cobro.
+  // 2. Lineas del desglose. Sin ninguna, no hay nada que revisar linea por
+  // linea: es charla o una explicacion de precios ("Con prensa serían
+  // Q445"), no un cobro. PERO si el mensaje igual afirma un total ("=
+  // *Q390 total*") y trae varios montos sueltos, es una cuenta hecha en una
+  // sola frase (el bug del 2 de septiembre) que no se puede verificar sin
+  // ambiguedad: se bloquea y pasa a una persona en vez de sumarse a ciegas,
+  // porque el propio mensaje puede traer un resultado parcial ("= Q345")
+  // mezclado entre los montos, y sumar todos daria OTRO numero mal.
   const lineas = leerLineas(texto)
-  if (lineas.length === 0) return { ok: true }
+  if (lineas.length === 0) {
+    const afirmaTotal = RE_TOTAL.test(texto) || RE_TOTAL_INVERTIDO.test(texto)
+    if (afirmaTotal && contarMontos(texto) >= 3) {
+      return {
+        ok: false,
+        motivo: 'trae un total con varios montos en una sola frase, sin formato de lineas: no se puede sumar con certeza',
+      }
+    }
+    return { ok: true }
+  }
 
   // 3. El envio, si aparece, tiene que ser Q45 y una sola vez.
   const envios = lineas.filter((l) => l.esEnvio)
