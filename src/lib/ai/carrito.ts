@@ -115,8 +115,13 @@ function accesorioDe(trozo: string): Accesorio {
   return 'ninguno'
 }
 
-/** El combo que nombra este trozo, si nombra alguno. */
-function buscaCombo(trozo: string) {
+/**
+ * El combo que nombra este trozo, si nombra alguno.
+ *
+ * Exportada: el portero la reusa para juzgar cada linea del desglose contra
+ * el catalogo, sin duplicar esta busqueda.
+ */
+export function buscaCombo(trozo: string) {
   // La cartera importada de Kommo escribe los nombres pegados y con la
   // cantidad delante: "01ColososAmerica", "02MiticoCoban". Comparar sin
   // espacios ni signos hace que esos entren igual que "Colosos de America".
@@ -135,8 +140,10 @@ function buscaCombo(trozo: string) {
  * Gana el nombre MAS LARGO que coincida: "maracaturra" contiene "caturra" y
  * "kenia sl28" contiene "kenia". Sin esta regla un Maracaturra se guardaba
  * como Caturra, y una Kenia SL28 de Q200 se cobraba como Kenia.
+ *
+ * Exportada por la misma razon que `buscaCombo`: el portero la reusa.
  */
-function buscaVariedad(trozo: string): [string, number] | undefined {
+export function buscaVariedad(trozo: string): [string, number] | undefined {
   const compacto = trozo.replace(/[^a-z0-9]/g, '')
   const candidatas = VARIEDADES.filter(([n]) => {
     const nn = sinAcentos(n)
@@ -303,6 +310,29 @@ export function cobrar(carrito: Carrito | null): Desglose | null {
     console.warn('[carrito] no se pudo calcular:', err instanceof Error ? err.message : err)
     return null
   }
+}
+
+/**
+ * El carrito, en el mismo texto libre que antes escribia el campo `combo=`
+ * del modelo ("1 Intensa Dulzura con prensa francesa + 1 África Mía").
+ *
+ * `combo_history` ahora sale de ACA, del carrito ya guardado como datos, en
+ * vez de depender de que el modelo declare el mismo pedido DOS veces —una
+ * en `[[CARRITO: ...]]` y otra en `combo=...`— sin que se contradigan.
+ */
+export function textoCarritoParaHistorial(carrito: Carrito): string {
+  const partes = carrito.items.map((it) => {
+    const sufijo =
+      it.tipo === 'combo' && it.accesorio === 'prensa'
+        ? ' con prensa francesa'
+        : it.tipo === 'combo' && it.accesorio === 'cafetera'
+          ? ' con cafetera italiana'
+          : ''
+    return it.cantidad > 1 ? `${it.cantidad} ${it.nombre}${sufijo}` : `${it.nombre}${sufijo}`
+  })
+  if (carrito.accesorioSuelto === 'prensa') partes.push('Prensa francesa')
+  if (carrito.accesorioSuelto === 'cafetera') partes.push('Cafetera italiana')
+  return partes.join(' + ')
 }
 
 /**
