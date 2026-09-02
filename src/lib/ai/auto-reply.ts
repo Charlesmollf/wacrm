@@ -16,8 +16,14 @@ import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { enforceTotales, enforceAccesorios } from './enforce-totales'
-import { pedidoDelDeal, carritoDesdeMarca, guardarCarrito, cobrar } from './carrito'
-import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
+import {
+  pedidoDelDeal,
+  carritoDesdeMarca,
+  guardarCarrito,
+  cobrar,
+  textoCarritoParaHistorial,
+} from './carrito'
+import { revisarSalida, formatoWhatsApp } from './portero'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -226,14 +232,14 @@ export async function dispatchInboundToAiReply(
     // modelo chico (Haiku) y una peticion en tono de pregunta ("Quisiera ver
     // si me pueden agregar un gesha"), el modelo a veces responde sin la
     // marca: el codigo entonces no tiene forma de saber que el pedido cambio,
-    // el portero compara contra el carrito VIEJO, no cuadra, y el cliente
-    // recibe de vuelta su pedido anterior como si el pedido de agregar algo
-    // se hubiera ignorado.
+    // y aunque el MENSAJE que ve el cliente puede estar bien (el portero ya no
+    // depende de esta marca, ver portero.ts), la tarjeta, el total guardado y
+    // `combo_history` se quedan con el pedido VIEJO — el cliente ve su cambio
+    // aceptado en el chat pero la tostaduria prepara el pedido de antes.
     //
-    // Antes de dejar que el portero lo tape, se le da al modelo UNA sola
-    // oportunidad de corregirse: si el cliente esta claramente pidiendo un
-    // cambio de pedido y la respuesta no trae la marca, se reintenta con un
-    // recordatorio explicito.
+    // Se le da al modelo UNA sola oportunidad de corregirse: si el cliente
+    // esta claramente pidiendo un cambio de pedido y la respuesta no trae la
+    // marca, se reintenta con un recordatorio explicito.
     //
     // Si el reintento TAMPOCO la trae, el bot NO se rinde ni molesta a Jefe:
     // le pregunta al cliente directamente cual es el cambio exacto que quiere
@@ -381,11 +387,6 @@ export async function dispatchInboundToAiReply(
     // the customer never sees them; the data is written to the deal card
     // best-effort (never blocks or fails the send).
     const deal = extractDealMarkers(text)
-    const { cleanText, images } = extractImageMarkers(deal.cleanText)
-    // Se ESPERA a que el pedido quede guardado: el total que va a revisar el
-    // portero se calcula de lo que quedo en la ficha, no de lo que el modelo
-    // dice haber entendido.
-    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     // EL CARRITO QUE DECLARO EL MODELO.
     //
@@ -398,6 +399,20 @@ export async function dispatchInboundToAiReply(
     // conversacion es adivinar; que el modelo lo declare es un dato.
     const carritoDeclarado = carritoDesdeMarca(text)
 
+    // UNA SOLA FUENTE para `combo_history`. Antes el modelo declaraba el
+    // pedido DOS veces —una en `combo=...` (texto libre) y otra en
+    // `[[CARRITO: ...]]` (datos)— y las dos podian contradecirse. Cuando hay
+    // marca CARRITO, ES ella la que manda: se pisa lo que haya llegado en
+    // `combo=`. Ese campo se deja como respaldo solo para cuando no hay
+    // marca (pedidos viejos, cartera importada de Shopify/Kommo).
+    if (carritoDeclarado) {
+      deal.updates.combo = textoCarritoParaHistorial(carritoDeclarado)
+    }
+
+    const { cleanText, images } = extractImageMarkers(deal.cleanText)
+    // Se ESPERA a que el pedido quede guardado antes de mandar el mensaje.
+    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
+
     // Texto final ya SIN marcas internas. Si el modelo respondió solo con
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso
     // NO se envía nada. Antes el respaldo mandaba el texto crudo y el
@@ -409,36 +424,25 @@ export async function dispatchInboundToAiReply(
         ),
       ),
     )
-    // ---- EL PORTERO -------------------------------------------------------
-    // El precio deja de salir de lo que escriba el modelo: lo calcula la caja
-    // registradora a partir del carrito, y si el mensaje afirma otro numero
-    // sale el desglose armado por codigo.
-    //
-    // La regla que faltaba: el portero SOLO tapa un mensaje cuando confia en su
-    // propia cuenta. Si el pedido se dedujo de prosa, `confiable` es false y al
-    // portero se le pasa null: cuida la cuenta bancaria y deja pasar el resto.
-    // Sin esa regla, un carrito mal leido amordazaba al modelo y el cliente
-    // recibia el mismo cuadro con el total viejo una y otra vez.
-    let textoAEnviar = finalText
-    if (finalText) {
+    // ---- EL CARRITO: ya NO decide si el mensaje sale ----------------------
+    // Hasta el 1 de septiembre esto alimentaba al portero (ver mas abajo). Un
+    // carrito incompleto (le faltaba una cafetera suelta) freno un mensaje
+    // que estaba BIEN y le repitio al cliente un total viejo dos veces. Ahora
+    // el carrito guardado SOLO alimenta la tarjeta, el total del pedido y la
+    // hoja — nunca decide que se manda.
+    if (carritoDeclarado) {
       try {
         const { data: filaPedido } = await db
           .from('deals')
-          .select('id, value, carrito, combo_history')
+          .select('id, value')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-
-        let desglose: Desglose | null = null
-        let confiable = false
-
-        if (carritoDeclarado && filaPedido?.id) {
-          // El modelo declaro el pedido: se guarda como datos y manda el.
+        if (filaPedido?.id) {
           await guardarCarrito(db, filaPedido.id, carritoDeclarado)
-          desglose = cobrar(carritoDeclarado)
-          confiable = true
+          const desglose = cobrar(carritoDeclarado)
           // UN SOLO TOTAL en todo el sistema. La tarjeta llego a decir Q890
           // mientras la caja decia Q490: el cliente y la tostaduria leian
           // numeros distintos del mismo pedido.
@@ -448,34 +452,38 @@ export async function dispatchInboundToAiReply(
               .update({ value: desglose.total })
               .eq('id', filaPedido.id)
           }
-        } else {
-          const leido = pedidoDelDeal(filaPedido)
-          desglose = leido.desglose
-          confiable = leido.confiable
         }
+      } catch (err) {
+        console.error('[carrito] no se pudo guardar/sincronizar:', err)
+      }
+    }
 
-        const veredicto = revisarSalida(finalText, confiable ? desglose : null)
+    // ---- EL PORTERO -------------------------------------------------------
+    // Revisa el desglose que EL PROPIO MENSAJE escribio, contra el catalogo.
+    // Ya no necesita ningun carrito (ver portero.ts para el porque).
+    let textoAEnviar = finalText
+    if (finalText) {
+      try {
+        const veredicto = revisarSalida(finalText)
         if (!veredicto.ok) {
-          if (confiable && desglose) {
-            console.warn(
-              `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo + pregunta de confirmacion.`,
-            )
-            // El desglose SI es de fiar (salio del carrito recien guardado):
-            // se manda el numero correcto, pero como algo no cuadro se le
-            // pide al cliente que lo confirme en vez de darlo por cerrado a
-            // ciegas. El cliente responde y la conversacion sigue sola.
-            textoAEnviar =
-              mensajeDeRespaldo(desglose, finalText) + '\n\n¿Así se lo dejo confirmado?'
+          if (veredicto.corregido) {
+            // Se identifico sin ambiguedad CUAL numero esta mal: se corrige
+            // solo ese, el resto del mensaje (tono, saludo) queda intacto.
+            console.warn(`[portero] numero corregido (${veredicto.motivo}).`)
+            textoAEnviar = veredicto.corregido
           } else {
-            console.warn(
-              `[portero] aviso sin frenar (${veredicto.motivo}): el pedido no es confiable, pasa el texto del modelo.`,
-            )
+            // No hay forma segura de arreglarlo solo (una cuenta bancaria
+            // ajena, un envio duplicado): se manda el mensaje del modelo TAL
+            // CUAL —no se inventa un reemplazo— y se avisa para que lo
+            // revise una persona.
+            console.warn(`[portero] no se pudo corregir solo (${veredicto.motivo}), aviso a Jefe.`)
+            void notifyHumanNeeded(db, {
+              accountId,
+              conversationId,
+              contactId,
+              preview: `[portero] ${veredicto.motivo}`,
+            })
           }
-          // Solo queda registrado para revisar despues; YA NO apaga el
-          // auto-reply ni avisa a Jefe. Dos o mas frenadas seguidas quieren
-          // decir que el pedido se puso complicado, y ahi el bot sigue
-          // preguntando hasta que el cliente lo aclare — no se lo entrega a
-          // una persona por su cuenta.
           await anotarFrenada(db, conversationId, Number(conv.portero_frenadas ?? 0) + 1)
         } else if (Number(conv.portero_frenadas ?? 0) > 0) {
           // Un mensaje limpio borra la cuenta: solo importan las seguidas.
