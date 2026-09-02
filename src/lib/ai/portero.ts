@@ -9,19 +9,44 @@
 // suma?" contesta que si con toda confianza aunque este mal, y eso es peor
 // que no verificar porque da tranquilidad falsa.
 //
-// Que revisa:
-//   1. Si el mensaje afirma un TOTAL, tiene que ser el de la caja.
-//   2. Si menciona una cuenta bancaria, tiene que ser la oficial.
-//   3. Ninguna cifra en quetzales puede estar fuera del desglose calculado.
+// HASTA EL 1 DE SEPTIEMBRE esto comparaba el mensaje contra un `Desglose`
+// guardado aparte (el carrito). El 1-9 el carrito quedo incompleto —le
+// faltaba una cafetera suelta— y el portero freno un mensaje que estaba
+// BIEN, lo reemplazo por el total viejo (Q405) y se lo repitio al cliente
+// dos veces. El cliente nunca vio el Q605 correcto. El carrito puede estar
+// mal por mil razones (el modelo no declaro la marca, la declaro a medias);
+// pedirle al portero que confie en el es pedirle que herede ese error.
 //
-// Que hace si falla: NO se le pide al modelo que lo intente de nuevo (volveria
-// a inventar). El codigo arma el mensaje correcto con la plantilla y manda ese.
-// Y queda el aviso en los logs, porque un modelo intentando inventar un numero
-// es sintoma de que algo esta mal mas arriba.
+// Ahora el portero no necesita NINGUN carrito. Verifica el desglose que EL
+// PROPIO MENSAJE escribio, linea por linea, contra el catalogo:
+//
+//   Pacamara — Q120
+//   2x Bourbon — Q240
+//   Cafetera italiana — Q200
+//   Envío — Q45
+//   *TOTAL: Q605*
+//
+// Que revisa:
+//   1. Si menciona una cuenta bancaria, tiene que ser la oficial.
+//   2. Cada linea "producto — Qmonto" contra su precio de catalogo.
+//   3. El envio, si aparece, tiene que ser Q45 (una sola vez).
+//   4. El TOTAL, si aparece, tiene que ser la suma de las lineas de arriba.
+//
+// Un mensaje SIN ninguna linea "algo — Qmonto" no tiene desglose que
+// revisar: es charla o una explicacion de precios, y pasa tal cual. Eso es
+// lo que arreglo el segundo bug del 1-9: "Con prensa serían Q445" (una
+// frase suelta, sin tabla) ya no se toca.
+//
+// Que hace si falla: si el numero equivocado se puede identificar sin
+// ambiguedad, se corrige EN EL MISMO MENSAJE —se cambia solo esa cifra, se
+// conserva todo lo demas tal como lo escribio el modelo—. Si no se puede
+// corregir con certeza (una cuenta bancaria ajena, un envio repetido), el
+// mensaje NO se manda tal cual con el error: quien llama decide pasarlo a
+// una persona. Y siempre queda el aviso en los logs.
 // ===========================================================================
 
-import type { Desglose } from './caja'
-import { textoDelDesglose } from './caja'
+import { ACCESORIOS, ENVIO, sinAcentos } from './enforce-totales'
+import { buscaCombo, buscaVariedad } from './carrito'
 
 export const CUENTA_OFICIAL = '30-3093873-2'
 
@@ -55,122 +80,165 @@ export function formatoWhatsApp(texto: string): string {
 export interface Veredicto {
   ok: boolean
   motivo?: string
-  /** Cifras del mensaje que no corresponden a ningun monto del pedido. */
-  cifrasRaras?: number[]
+  /**
+   * El mensaje original con la UNICA cifra equivocada corregida. Solo viene
+   * cuando el error se pudo identificar sin ambiguedad. Si `ok` es false y
+   * `corregido` no viene, el error existe pero no es seguro repararlo solo:
+   * hay que mandar el mensaje a una persona.
+   */
+  corregido?: string
 }
 
-/** Todos los montos que el mensaje tiene permitido nombrar. */
-function montosPermitidos(d: Desglose): Set<number> {
-  const ok = new Set<number>([d.total, d.cafe, d.envio])
-  for (const l of d.lineas) {
-    ok.add(l.total)
-    ok.add(l.unitario)
-  }
-  // Un pedido de varias lineas puede nombrar subtotales parciales legitimos
-  // ("las dos bolsas son Q240"), asi que se permiten las sumas acumuladas.
-  let acumulado = 0
-  for (const l of d.lineas) {
-    acumulado += l.total
-    ok.add(acumulado)
-    ok.add(acumulado + d.envio)
-  }
-  return ok
+/** Una linea "(cantidad)? descripcion — Qmonto" del mensaje. */
+const RE_LINEA =
+  /^[ \t]*(?:(\d{1,2})x[ \t]+)?([^\n—]+?)[ \t]+—[ \t]+Q[ \t]*(\d{1,6})[ \t]*\*?[ \t]*$/gim
+
+/** La linea "*TOTAL: Qmonto*", la primera que aparezca. */
+const RE_TOTAL = /total\s*(?:a\s*(?:pagar|transferir))?\s*[:=]?\s*\**\s*Q[ \t]*(\d{1,6})/i
+
+interface LineaEncontrada {
+  /** null = producto que el catalogo no reconoce; no se juzga su precio. */
+  esperado: number | null
+  monto: number
+  inicio: number
+  fin: number
+  esEnvio: boolean
 }
 
-/** Cifras en quetzales que aparecen en el texto. */
-function cifrasDelTexto(texto: string): number[] {
-  const out: number[] = []
-  const re = /Q\s*(\d{2,5})(?![\d/-])/gi
+/**
+ * Donde cae, dentro del texto completo, el monto que capturo un match.
+ *
+ * El monto es el ultimo numero del match (nada numerico lo sigue salvo
+ * espacios/asterisco de cierre), asi que basta ubicar su ULTIMA aparicion
+ * dentro del match para no confundirlo con un numero que traiga la
+ * descripcion (una "Kenia SL28", por ejemplo).
+ */
+function posicionDelMonto(m: RegExpExecArray, grupo: string): [number, number] {
+  const offset = m[0].lastIndexOf(grupo)
+  const inicio = m.index + offset
+  return [inicio, inicio + grupo.length]
+}
+
+/** Que combo (y con que accesorio) nombra esta descripcion, si nombra uno. */
+function comboDeLinea(descripcionPlana: string): { unitario: number } | null {
+  let base = descripcionPlana
+  let accesorio: 'prensa' | 'cafetera' | null = null
+  const conAccesorio = base.match(/^(.*?)\s+con\s+(prensa\s*francesa|cafetera\s*italiana)$/)
+  if (conAccesorio) {
+    base = conAccesorio[1].trim()
+    accesorio = conAccesorio[2].startsWith('prensa') ? 'prensa' : 'cafetera'
+  }
+  const combo = buscaCombo(base)
+  if (!combo) return null
+  const unitario = accesorio === 'prensa' ? combo.prensa : accesorio === 'cafetera' ? combo.cafetera : combo.solo
+  return { unitario }
+}
+
+/** Lee todas las lineas "algo — Qmonto" del mensaje y las juzga contra el catalogo. */
+function leerLineas(texto: string): LineaEncontrada[] {
+  const out: LineaEncontrada[] = []
+  RE_LINEA.lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = re.exec(texto)) !== null) out.push(Number(m[1]))
+  while ((m = RE_LINEA.exec(texto)) !== null) {
+    const cantidad = m[1] ? Number(m[1]) : 1
+    const descripcion = m[2].trim()
+    const plano = sinAcentos(descripcion).trim()
+    const monto = Number(m[3])
+    const [inicio, fin] = posicionDelMonto(m, m[3])
+
+    if (plano === 'envio' || plano === 'envío') {
+      out.push({ esperado: ENVIO, monto, inicio, fin, esEnvio: true })
+      continue
+    }
+    // Linea que es SOLO el accesorio (prensa o cafetera comprada suelta,
+    // junto a bolsas): "Cafetera italiana — Q200". Este es exactamente el
+    // caso que el 1-9 el carrito perdia.
+    if (plano === 'prensa francesa' || plano === 'prensa') {
+      out.push({ esperado: ACCESORIOS.prensa * cantidad, monto, inicio, fin, esEnvio: false })
+      continue
+    }
+    if (plano === 'cafetera italiana' || plano === 'cafetera') {
+      out.push({ esperado: ACCESORIOS.cafetera * cantidad, monto, inicio, fin, esEnvio: false })
+      continue
+    }
+    const combo = comboDeLinea(plano)
+    if (combo) {
+      out.push({ esperado: combo.unitario * cantidad, monto, inicio, fin, esEnvio: false })
+      continue
+    }
+    const variedad = buscaVariedad(plano)
+    if (variedad) {
+      out.push({ esperado: variedad[1] * cantidad, monto, inicio, fin, esEnvio: false })
+      continue
+    }
+    // Producto que el catalogo no conoce (una promo, algo nuevo). No se
+    // juzga esta linea, pero SI cuenta para el total de mas abajo: negarle
+    // eso al mensaje bloquearia cualquier cosa que no este en la tabla.
+    out.push({ esperado: null, monto, inicio, fin, esEnvio: false })
+  }
   return out
 }
 
-/** El total que el mensaje afirma, si lo afirma. */
-export function totalAfirmado(texto: string): number | null {
-  const re = /total\s*(?:a\s*(?:pagar|transferir))?\s*[:=]?\s*\**\s*Q\s*(\d{2,5})/i
-  const m = texto.match(re)
-  if (m) return Number(m[1])
-  const igual = texto.match(/=\s*\**\s*Q\s*(\d{2,5})\s*\**\s*total/i)
-  return igual ? Number(igual[1]) : null
+/** Cambia solo los digitos en texto[inicio,fin) por el numero correcto. */
+function conNumeroCorregido(texto: string, inicio: number, fin: number, valor: number): string {
+  return texto.slice(0, inicio) + String(valor) + texto.slice(fin)
 }
 
 /**
- * Revisa el mensaje contra el pedido calculado.
- *
- * `desglose` es null cuando todavia no hay un pedido armado (el cliente esta
- * preguntando precios). En ese caso solo se revisa la cuenta bancaria: no hay
- * contra que comparar las cifras y bloquear seria romper una consulta normal.
+ * Revisa el mensaje contra el catalogo. No necesita ningun carrito: verifica
+ * el desglose que EL PROPIO MENSAJE escribio.
  */
-export function revisarSalida(texto: string, desglose: Desglose | null): Veredicto {
+export function revisarSalida(texto: string): Veredicto {
   if (!texto) return { ok: true }
 
-  // 1. La cuenta bancaria: siempre, haya pedido o no.
+  // 1. La cuenta bancaria: siempre, tenga desglose o no.
   const hablaDeCuenta = /\b(cuenta|cta\.?|monetaria|transferencia)\b/i.test(texto)
   const tieneOtraCuenta =
-    hablaDeCuenta &&
-    /\b\d{2}-?\d{7}-?\d\b/.test(texto) &&
-    !texto.includes(CUENTA_OFICIAL)
+    hablaDeCuenta && /\b\d{2}-?\d{7}-?\d\b/.test(texto) && !texto.includes(CUENTA_OFICIAL)
   if (tieneOtraCuenta) {
+    // Que cuenta poner en su lugar no es cosa de adivinar: se manda tal cual
+    // esta y que lo revise una persona.
     return { ok: false, motivo: 'menciona una cuenta que no es la oficial' }
   }
 
-  if (!desglose || desglose.lineas.length === 0) return { ok: true }
+  // 2. Lineas del desglose. Sin ninguna, no hay nada que revisar: es charla
+  // o una explicacion de precios ("Con prensa serían Q445"), no un cobro.
+  const lineas = leerLineas(texto)
+  if (lineas.length === 0) return { ok: true }
 
-  // 2. El total afirmado tiene que ser el de la caja.
-  const afirmado = totalAfirmado(texto)
-  if (afirmado !== null && afirmado !== desglose.total) {
-    return {
-      ok: false,
-      motivo: `el mensaje dice Q${afirmado} y el pedido son Q${desglose.total}`,
+  // 3. El envio, si aparece, tiene que ser Q45 y una sola vez.
+  const envios = lineas.filter((l) => l.esEnvio)
+  if (envios.length > 1) {
+    return { ok: false, motivo: 'el envío aparece más de una vez' }
+  }
+
+  // 4. Cada linea reconocida contra su precio de catalogo. La primera que
+  // no cuadre se corrige ahi mismo: un solo numero, el resto del mensaje
+  // queda intacto.
+  for (const l of lineas) {
+    if (l.esperado !== null && l.monto !== l.esperado) {
+      return {
+        ok: false,
+        motivo: `una línea dice Q${l.monto} y el catálogo son Q${l.esperado}`,
+        corregido: conNumeroCorregido(texto, l.inicio, l.fin, l.esperado),
+      }
     }
   }
 
-  // 3. Ninguna cifra puede estar fuera del desglose.
-  const permitidos = montosPermitidos(desglose)
-  const raras = cifrasDelTexto(texto).filter((c) => !permitidos.has(c))
-  if (raras.length > 0) {
-    return {
-      ok: false,
-      motivo: `cifras que no salen del pedido: ${raras.join(', ')}`,
-      cifrasRaras: raras,
-    }
+  // 5. El TOTAL, si el mensaje lo afirma, tiene que ser la suma de arriba
+  // (incluye las lineas que el catalogo no reconoce: se cuentan con el
+  // monto que el mensaje ya les puso, no se inventan).
+  const suma = lineas.reduce((acc, l) => acc + l.monto, 0)
+  RE_TOTAL.lastIndex = 0
+  const mTotal = RE_TOTAL.exec(texto)
+  if (!mTotal) return { ok: true }
+  const totalAfirmado = Number(mTotal[1])
+  if (totalAfirmado === suma) return { ok: true }
+
+  const [inicio, fin] = posicionDelMonto(mTotal, mTotal[1])
+  return {
+    ok: false,
+    motivo: `el mensaje dice Q${totalAfirmado} y la suma del desglose son Q${suma}`,
+    corregido: conNumeroCorregido(texto, inicio, fin, suma),
   }
-
-  return { ok: true }
-}
-
-/**
- * La parte conversacional del mensaje: lo que el modelo escribio ANTES de
- * empezar a dar numeros.
- *
- * Sirve para que, cuando el portero frena un mensaje, al cliente no le llegue
- * una tabla seca: se conserva el saludo y el reconocimiento ("Perfecto, se lo
- * preparo en molido") y solo se reemplaza la cuenta.
- */
-export function parteConversacional(texto: string): string {
-  const lineas = texto.split('\n')
-  const buenas: string[] = []
-  for (const linea of lineas) {
-    // En cuanto aparece una cifra en quetzales empieza la cuenta: ahi se corta.
-    if (/Q\s*\d{2,5}/i.test(linea)) break
-    buenas.push(linea)
-  }
-  const limpio = buenas.join('\n').trim()
-  // Una frase suelta muy corta ("Perfecto") no aporta; mejor el texto propio.
-  return limpio.length >= 8 ? limpio : ''
-}
-
-/**
- * El mensaje que sale cuando el portero rechaza.
- *
- * El desglose viene de la caja y no lo toca nadie. Lo conversacional se
- * conserva del modelo cuando existe, para que el cliente no reciba un cuadro
- * seco despues de una conversacion normal.
- */
-export function mensajeDeRespaldo(d: Desglose, textoOriginal?: string): string {
-  const saludo = textoOriginal ? parteConversacional(textoOriginal) : ''
-  const cuenta = textoDelDesglose(d)
-  if (saludo) return `${saludo}\n\n${cuenta}`
-  return `Le confirmo su pedido:\n\n${cuenta}`
 }
