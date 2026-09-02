@@ -36,6 +36,14 @@ export interface ItemPedido {
    * Para bolsas sueltas el accesorio si se suma (ver `accesorioSuelto`).
    */
   accesorio?: Accesorio
+  /**
+   * Solo para combos: aclaracion en texto libre pegada al pedido (por
+   * ejemplo, que grano lleva cada bolsa dentro de un combo con molienda
+   * Mixto: "Pacamara grano, Maracaturra grano, Maragogipe molido"). No
+   * afecta el precio, es solo para que quede registrado que trae cada
+   * bolsa. Ver `carrito.ts` sobre por que esto existe.
+   */
+  detalle?: string
 }
 
 export interface LineaCalculada {
