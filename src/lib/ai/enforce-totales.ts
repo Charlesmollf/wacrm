@@ -32,15 +32,24 @@ export interface Combo {
   solo: number
   prensa: number
   cafetera: number
+  /**
+   * Variedades FIJAS que trae el combo (claves de `VARIEDADES`, en
+   * minuscula). El cliente no las elige ni las cambia — vienen todas
+   * siempre. Sirve para que `carrito.ts` sepa que un combo y sus propias
+   * variedades no son dos cosas distintas: ver el comentario grande en
+   * ese archivo sobre el bug del 2 de septiembre.
+   */
+  contenido?: string[]
 }
 
 /** Precios del cafe SIN envio. Fuente: MANUAL.md seccion 2. */
 export const CATALOGO: Combo[] = [
-  { nombre: 'Procesos Secretos', claves: ['procesos secretos'], solo: 240, prensa: 260, cafetera: 440 },
-  { nombre: 'Colosos de América', claves: ['colosos de america', 'colosos'], solo: 345, prensa: 445, cafetera: 545 },
-  { nombre: 'Intensa Dulzura', claves: ['intensa dulzura'], solo: 345, prensa: 445, cafetera: 545 },
-  { nombre: 'Mítico Cobán', claves: ['mitico coban'], solo: 345, prensa: 445, cafetera: 545 },
-  { nombre: 'África Mía', claves: ['africa mia'], solo: 400, prensa: 500, cafetera: 545 },
+    { nombre: 'Procesos Secretos', claves: ['procesos secretos'], solo: 240, prensa: 260, cafetera: 440, contenido: ['anaerobico', 'peaberry'] },
+  { nombre: 'Colosos de América', claves: ['colosos de america', 'colosos'], solo: 345, prensa: 445, cafetera: 545, contenido: ['pacamara', 'maracaturra', 'maragogipe'] },
+  { nombre: 'Intensa Dulzura', claves: ['intensa dulzura'], solo: 345, prensa: 445, cafetera: 545, contenido: ['pacamara', 'catuai', 'anaerobico'] },
+  { nombre: 'Mítico Cobán', claves: ['mitico coban'], solo: 345, prensa: 445, cafetera: 545, contenido: ['bourbon', 'catuai', 'caturra roja'] },
+  { nombre: 'África Mía', claves: ['africa mia'], solo: 400, prensa: 500, cafetera: 545, contenido: ['gesha', 'kenia sl28'] },
+  // Highland Cobán: el prompt no dice su contenido fijo, se deja sin `contenido`.
   { nombre: 'Highland Cobán', claves: ['highland coban', 'combo #4'], solo: 220, prensa: 320, cafetera: 440 },
 ]
 
