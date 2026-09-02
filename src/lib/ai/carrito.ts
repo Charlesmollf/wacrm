@@ -33,6 +33,25 @@
 //     produce un carrito nuevo y el total se recalcula desde cero.
 //   - `combo_history` no se toca: sigue siendo el historial de compras del
 //     cliente. Las dos formas conviven y el carrito manda cuando existe.
+//
+// EL 2 DE SEPTIEMBRE paso otra cosa distinta. Un combo de tres variedades
+// (Colosos de America) llevaba cada bolsa con una molienda distinta, y el
+// modelo aclaro cual bolsa iba en grano y cual molida pegando esa aclaracion
+// entre parentesis al nombre del combo, igual que ya lo hace en el mensaje
+// que ve el cliente: "1 Colosos de America (Pacamara grano, Maracaturra
+// grano, Maragogipe molido)". El separador de productos de la marca es la
+// coma ademas del punto y coma, y esta funcion cortaba por CUALQUIER coma
+// sin fijarse si estaba dentro de un parentesis. La aclaracion se hizo
+// pedazos, dos de esas variedades (que el catalogo SI reconoce como bolsas
+// sueltas de Q120) quedaron como si el cliente las hubiera comprado ADEMAS
+// del combo, y la tercera se perdio. `combo_history` termino diciendo
+// "Colosos de America + Pacamara + Maracaturra": ni la aclaracion que se
+// queria dar, ni el pedido real (que era UN combo, nada mas).
+//
+// Por eso ahora los parentesis no se tocan al separar productos —lo de
+// adentro es una aclaracion del producto anterior, no productos nuevos— y
+// esa aclaracion se guarda tal cual en `ItemPedido.detalle`, sin intentar
+// interpretarla. Ver `trozosDeCarrito`.
 // ===========================================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -166,6 +185,32 @@ function conMayusculas(nombre: string): string {
 }
 
 /**
+ * Separa los productos de la marca por `;`, `+`, `,` o salto de linea —
+ * pero NUNCA cuando ese separador cae DENTRO de un parentesis. Lo que va
+ * entre parentesis es una aclaracion del producto anterior (por ejemplo,
+ * que molienda lleva cada bolsa de un combo), no una lista de productos
+ * nuevos. Este es el arreglo del bug del 2 de septiembre: ver el
+ * comentario grande al inicio del archivo.
+ */
+function trozosDeCarrito(texto: string): string[] {
+    const partes: string[] = []
+    let actual = ''
+    let profundidad = 0
+    for (const ch of texto) {
+        if (ch === '(') profundidad++
+        else if (ch === ')') profundidad = Math.max(0, profundidad - 1)
+        if (profundidad === 0 && /[;+,\n]/.test(ch)) {
+            partes.push(actual)
+            actual = ''
+        } else {
+            actual += ch
+        }
+    }
+    partes.push(actual)
+    return partes.map((s) => s.trim()).filter(Boolean)
+}
+
+/**
  * El corazon del lector: una lista de trozos -> un carrito.
  *
  * Recorre TODOS los trozos. Aca esta el arreglo de fondo del 1 de septiembre:
@@ -173,74 +218,84 @@ function conMayusculas(nombre: string): string {
  * texto. Un pedido de dos combos y una bolsa se cobraba como un solo combo.
  */
 function carritoDeLista(bruto: string, origen: 'marca' | 'texto'): Carrito | null {
-  // La cartera de Kommo trae "Kennia" con doble n. Es Kenia SL28, y cuesta
-  // Q200: sin esto se cobraba como una bolsa comun.
-  const plano = sinAcentos(String(bruto ?? ''))
-    .replace(/^\[[^\]]*\]\s*/, '')
-    .replace(/kennia/g, 'kenia sl28')
-  if (!plano.trim()) return null
+    const original = String(bruto ?? '').replace(/^\[[^\]]*\]\s*/, '')
+    if (!original.trim()) return null
 
-  const trozos = plano.split(/[;+,\n]/).map((s) => s.trim()).filter(Boolean)
+    // Los trozos se separan ANTES de bajarles el acento y la mayuscula, para
+    // poder sacar el detalle entre parentesis tal como lo escribio el modelo
+    // (ver mas abajo). El resto de la deteccion (combo, variedad, accesorio)
+    // sigue trabajando sobre texto normalizado, como siempre.
+    const trozosOriginales = trozosDeCarrito(original)
 
-  const items: ItemPedido[] = []
-  let accesorioSuelto: Accesorio = 'ninguno'
+    const items: ItemPedido[] = []
+    let accesorioSuelto: Accesorio = 'ninguno'
 
-  for (const trozo of trozos) {
-    // "sin accesorio" describe al producto anterior; no es un producto.
-    if (/^sin\s+accesorio/.test(trozo)) continue
+    for (const trozoOriginal of trozosOriginales) {
+        // La cartera de Kommo trae "Kennia" con doble n. Es Kenia SL28, y cuesta
+        // Q200: sin esto se cobraba como una bolsa comun.
+        const trozo = sinAcentos(trozoOriginal).replace(/kennia/g, 'kenia sl28')
 
-    const acc = accesorioDe(trozo)
+        // "sin accesorio" describe al producto anterior; no es un producto.
+        if (/^sin\s+accesorio/.test(trozo)) continue
 
-    const combo = buscaCombo(trozo)
-    if (combo) {
-      items.push({
-        tipo: 'combo',
-        nombre: combo.nombre,
-        cantidad: cuantasUnidades(trozo),
-        accesorio: acc,
-      })
-      continue
+        const acc = accesorioDe(trozo)
+
+        const combo = buscaCombo(trozo)
+        if (combo) {
+            // Lo que venga entre parentesis es aclaracion del combo (que grano
+            // lleva cada bolsa, por ejemplo), no un producto aparte: se guarda
+            // TAL COMO LO ESCRIBIO EL MODELO, sin normalizar ni interpretar.
+            // Ver `trozosDeCarrito`.
+            const detalle = trozoOriginal.match(/\(([^)]*)\)/)?.[1]?.trim()
+            items.push({
+                tipo: 'combo',
+                nombre: combo.nombre,
+                cantidad: cuantasUnidades(trozo),
+                accesorio: acc,
+                ...(detalle ? { detalle } : {}),
+            })
+            continue
+        }
+
+        const variedad = buscaVariedad(trozo)
+        if (variedad) {
+            items.push({
+                tipo: 'bolsa',
+                nombre: conMayusculas(variedad[0]),
+                cantidad: cuantasUnidades(trozo),
+            })
+            continue
+        }
+
+        // Trozo que es SOLO un accesorio. Dos lecturas posibles, y la diferencia
+        // es de cien quetzales:
+        //   "Intensa Dulzura + prensa francesa" -> el combo va CON prensa (Q445).
+        //   "2 Pacamara + prensa francesa"      -> la prensa se compra aparte.
+        // Se pega al combo anterior cuando ese combo todavia no tiene accesorio;
+        // si no hay combo al que pegarse, es una compra suelta.
+        if (acc !== 'ninguno') {
+            const ultimo = items[items.length - 1]
+            if (ultimo && ultimo.tipo === 'combo' && (ultimo.accesorio ?? 'ninguno') === 'ninguno') {
+                ultimo.accesorio = acc
+            } else {
+                accesorioSuelto = acc
+            }
+        }
     }
 
-    const variedad = buscaVariedad(trozo)
-    if (variedad) {
-      items.push({
-        tipo: 'bolsa',
-        nombre: conMayusculas(variedad[0]),
-        cantidad: cuantasUnidades(trozo),
-      })
-      continue
+    if (items.length === 0 && accesorioSuelto === 'ninguno') return null
+
+    // Un mismo producto nombrado en dos trozos se junta en una linea. Suma las
+    // cantidades: "1 Pacamara; 1 Pacamara" son dos bolsas.
+    const juntos = new Map<string, ItemPedido>()
+    for (const it of items) {
+        const llave = `${it.tipo}|${it.nombre}|${it.accesorio ?? 'ninguno'}`
+        const previo = juntos.get(llave)
+        if (previo) previo.cantidad += it.cantidad
+        else juntos.set(llave, { ...it })
     }
 
-    // Trozo que es SOLO un accesorio. Dos lecturas posibles, y la diferencia
-    // es de cien quetzales:
-    //   "Intensa Dulzura + prensa francesa" -> el combo va CON prensa (Q445).
-    //   "2 Pacamara + prensa francesa"      -> la prensa se compra aparte.
-    // Se pega al combo anterior cuando ese combo todavia no tiene accesorio;
-    // si no hay combo al que pegarse, es una compra suelta.
-    if (acc !== 'ninguno') {
-      const ultimo = items[items.length - 1]
-      if (ultimo && ultimo.tipo === 'combo' && (ultimo.accesorio ?? 'ninguno') === 'ninguno') {
-        ultimo.accesorio = acc
-      } else {
-        accesorioSuelto = acc
-      }
-    }
-  }
-
-  if (items.length === 0 && accesorioSuelto === 'ninguno') return null
-
-  // Un mismo producto nombrado en dos trozos se junta en una linea. Suma las
-  // cantidades: "1 Pacamara; 1 Pacamara" son dos bolsas.
-  const juntos = new Map<string, ItemPedido>()
-  for (const it of items) {
-    const llave = `${it.tipo}|${it.nombre}|${it.accesorio ?? 'ninguno'}`
-    const previo = juntos.get(llave)
-    if (previo) previo.cantidad += it.cantidad
-    else juntos.set(llave, { ...it })
-  }
-
-  return { items: [...juntos.values()], accesorioSuelto, origen }
+    return { items: [...juntos.values()], accesorioSuelto, origen }
 }
 
 /**
@@ -321,18 +376,24 @@ export function cobrar(carrito: Carrito | null): Desglose | null {
  * en `[[CARRITO: ...]]` y otra en `combo=...`— sin que se contradigan.
  */
 export function textoCarritoParaHistorial(carrito: Carrito): string {
-  const partes = carrito.items.map((it) => {
-    const sufijo =
-      it.tipo === 'combo' && it.accesorio === 'prensa'
+    const partes = carrito.items.map((it) => {
+        const sufijo =
+            it.tipo === 'combo' && it.accesorio === 'prensa'
         ? ' con prensa francesa'
-        : it.tipo === 'combo' && it.accesorio === 'cafetera'
-          ? ' con cafetera italiana'
-          : ''
-    return it.cantidad > 1 ? `${it.cantidad} ${it.nombre}${sufijo}` : `${it.nombre}${sufijo}`
-  })
-  if (carrito.accesorioSuelto === 'prensa') partes.push('Prensa francesa')
-  if (carrito.accesorioSuelto === 'cafetera') partes.push('Cafetera italiana')
-  return partes.join(' + ')
+            : it.tipo === 'combo' && it.accesorio === 'cafetera'
+        ? ' con cafetera italiana'
+            : ''
+        // El detalle (que grano lleva cada bolsa del combo, por ejemplo) queda
+        // pegado al nombre entre parentesis: es lo que la tostaduria necesita
+        // ver para empacar, y antes se perdia o se convertia en productos falsos.
+        const detalle = it.tipo === 'combo' && it.detalle ? ` (${it.detalle})` : ''
+        return it.cantidad > 1
+        ? `${it.cantidad} ${it.nombre}${sufijo}${detalle}`
+            : `${it.nombre}${sufijo}${detalle}`
+    })
+    if (carrito.accesorioSuelto === 'prensa') partes.push('Prensa francesa')
+    if (carrito.accesorioSuelto === 'cafetera') partes.push('Cafetera italiana')
+    return partes.join(' + ')
 }
 
 /**
