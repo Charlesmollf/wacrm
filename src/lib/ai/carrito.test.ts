@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { cuantasUnidades, carritoDesdeTexto, leerCarrito, desgloseDelPedido } from './carrito'
+import {
+    cuantasUnidades,
+    carritoDesdeTexto,
+    carritoDesdeMarca,
+    leerCarrito,
+    desgloseDelPedido,
+    textoCarritoParaHistorial,
+} from './carrito'
 
 describe('cuantas unidades', () => {
   it('lee el numero adelante, que es lo unico que entendia antes', () => {
@@ -124,4 +131,44 @@ describe('la cartera real importada de Kommo', () => {
   it('un combo que no esta en la tabla no se inventa', () => {
     expect(desgloseDelPedido({ combo_history: 'Combo#2' })).toBe(null)
   })
+})
+
+
+describe('el caso del 2 de septiembre: combo con aclaracion entre parentesis', () => {
+    it('la coma DENTRO del parentesis no parte el combo en productos falsos', () => {
+        const c = carritoDesdeMarca(
+            '[[CARRITO: 1 Colosos de America (Pacamara grano, Maracaturra grano, Maragogipe molido)]]',
+            )!
+        expect(c.items).toEqual([
+          {
+              tipo: 'combo',
+              nombre: 'Colosos de América',
+              cantidad: 1,
+              accesorio: 'ninguno',
+              detalle: 'Pacamara grano, Maracaturra grano, Maragogipe molido',
+          },
+            ])
+        // Antes esto se cobraba Q345 (combo) + Q120 + Q120 (dos de las tres
+         // variedades sueltas): Q585 en vez de Q345.
+         expect(desgloseDelPedido({ carrito: c })!.cafe).toBe(345)
+    })
+
+           it('el detalle se guarda tal cual en combo_history, en vez de perderse', () => {
+               const c = carritoDesdeMarca(
+                   '[[CARRITO: 1 Colosos de America (Pacamara grano, Maracaturra grano, Maragogipe molido)]]',
+                   )!
+               expect(textoCarritoParaHistorial(c)).toBe(
+                   'Colosos de América (Pacamara grano, Maracaturra grano, Maragogipe molido)',
+                   )
+           })
+
+           it('sin parentesis se comporta igual que antes', () => {
+               const c = carritoDesdeMarca('[[CARRITO: 1 Colosos de America; 1 África Mía]]')!
+               expect(textoCarritoParaHistorial(c)).toBe('Colosos de América + África Mía')
+           })
+
+           it('una lista de bolsas sueltas por coma sigue funcionando fuera de parentesis', () => {
+               const c = carritoDesdeMarca('[[CARRITO: 1 Pacamara, 1 Bourbon]]')!
+               expect(c.items).toHaveLength(2)
+           })
 })
