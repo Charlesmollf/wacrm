@@ -1,4 +1,3 @@
-import type { Desglose } from './caja'
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
@@ -8,8 +7,14 @@ import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
-import { pedidoDelDeal, carritoDesdeMarca, guardarCarrito, cobrar } from './carrito'
-import { revisarSalida, mensajeDeRespaldo, formatoWhatsApp } from './portero'
+import { notifyHumanNeeded } from '@/lib/notify/human-alert'
+import {
+  carritoDesdeMarca,
+  guardarCarrito,
+  cobrar,
+  textoCarritoParaHistorial,
+} from './carrito'
+import { revisarSalida, formatoWhatsApp } from './portero'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -326,39 +331,39 @@ export async function dispatchInboundImageToAiReply(
     // pull any [[IMG: product]] markers, send the cleaned text, then the
     // matching image(s). Best-effort: a failed photo never loses the text.
     const deal = extractDealMarkers(text)
-    const { cleanText, images } = extractImageMarkers(deal.cleanText)
-    // Se espera: el portero necesita el pedido ya guardado para calcular.
-    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     // El carrito que el modelo declaro en su mensaje: el pedido COMPLETO.
     // Mismo trato que en la ruta de texto — el pedido es un dato, no una
     // deduccion sobre una frase escrita en el historial.
     const carritoDeclarado = carritoDesdeMarca(text)
+    // Fuente unica de `combo_history`: si hay marca CARRITO, manda ella y se
+    // pisa cualquier `combo=` que haya llegado por separado (ver auto-reply.ts).
+    if (carritoDeclarado) {
+      deal.updates.combo = textoCarritoParaHistorial(carritoDeclarado)
+    }
+
+    const { cleanText, images } = extractImageMarkers(deal.cleanText)
+    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     const finalText = enforceSuma(
       enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
     )
-    // El portero, igual que en la ruta de texto: el total sale de la caja,
-    // no de lo que el modelo haya escrito al mirar la foto.
-    let textoAEnviar = finalText
-    if (finalText) {
+
+    // El carrito ya NO decide si el mensaje sale: solo alimenta la tarjeta,
+    // el total del pedido y la hoja (ver auto-reply.ts para el porque).
+    if (carritoDeclarado) {
       try {
         const { data: filaPedido } = await db
           .from('deals')
-          .select('id, value, carrito, combo_history')
+          .select('id, value')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-
-        let desglose: Desglose | null = null
-        let confiable = false
-        if (carritoDeclarado && filaPedido?.id) {
-          // El modelo declaro el pedido: se guarda como datos y manda el.
+        if (filaPedido?.id) {
           await guardarCarrito(db, filaPedido.id, carritoDeclarado)
-          desglose = cobrar(carritoDeclarado)
-          confiable = true
+          const desglose = cobrar(carritoDeclarado)
           // Un solo total: la tarjeta y la caja nunca vuelven a discrepar.
           if (desglose && Number(filaPedido.value ?? 0) !== desglose.total) {
             await db
@@ -366,22 +371,30 @@ export async function dispatchInboundImageToAiReply(
               .update({ value: desglose.total })
               .eq('id', filaPedido.id)
           }
-        } else {
-          const leido = pedidoDelDeal(filaPedido)
-          desglose = leido.desglose
-          confiable = leido.confiable
         }
+      } catch (err) {
+        console.error('[carrito] no se pudo guardar/sincronizar:', err)
+      }
+    }
 
-        // El portero solo tapa un mensaje cuando confia en su propia cuenta.
-        // Con un pedido deducido de prosa se le pasa null: cuida la cuenta
-        // bancaria y deja pasar lo que escribio el modelo.
-        const veredicto = revisarSalida(finalText, confiable ? desglose : null)
+    // El portero: revisa el desglose que EL PROPIO MENSAJE escribio contra
+    // el catalogo. Igual que en la ruta de texto, ya no necesita carrito.
+    let textoAEnviar = finalText
+    if (finalText) {
+      try {
+        const veredicto = revisarSalida(finalText)
         if (!veredicto.ok) {
-          console.warn(
-            `[portero] mensaje frenado (${veredicto.motivo}). Sale el desglose del codigo.`,
-          )
-          if (confiable && desglose) {
-            textoAEnviar = mensajeDeRespaldo(desglose, finalText)
+          if (veredicto.corregido) {
+            console.warn(`[portero] numero corregido (${veredicto.motivo}).`)
+            textoAEnviar = veredicto.corregido
+          } else {
+            console.warn(`[portero] no se pudo corregir solo (${veredicto.motivo}), aviso a Jefe.`)
+            void notifyHumanNeeded(db, {
+              accountId,
+              conversationId,
+              contactId,
+              preview: `[portero] ${veredicto.motivo}`,
+            })
           }
         }
       } catch (err) {
