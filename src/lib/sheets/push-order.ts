@@ -56,6 +56,16 @@ function fechaGT(iso: string | null | undefined): string {
   return `${dd}/${mm}/${gt.getUTCFullYear()}`
 }
 
+/**
+ * Numero local de 8 digitos, sin el codigo de pais. `contacts.phone`
+ * lo guarda como "502" + 8 digitos; para Cargo Expreso (y para
+ * cualquiera que lea la hoja en Guatemala) solo importan esos 8.
+ */
+export function telefonoLocal(phone: string | null | undefined): string {
+  const t = String(phone ?? '')
+  return /^502\d{8}$/.test(t) ? t.slice(3) : t
+}
+
 export async function pushOrderToSheet(
   db: SupabaseClient,
   accountId: string,
@@ -76,7 +86,16 @@ export async function pushOrderToSheet(
         .eq('id', deal.contact_id)
         .maybeSingle()
       cliente = String(c?.name ?? '')
-      telefono = String(c?.phone ?? '')
+      // Sin el 502: en Guatemala el codigo de pais no se usa ni se dice
+      // (la tostaduria jamas lo escribe al crear el envio). Antes se
+      // mandaba completo ("50230987769") y quedaba disponible para
+      // copiar-pegar tal cual a Cargo Expreso — cuyo campo de telefono
+      // es de 8 digitos. Un copy-paste del numero completo se corta a
+      // los primeros 8 caracteres y pierde los ultimos 3 digitos reales
+      // (le paso a Katherine Valenzuela Tojin y a 8 pedidos mas el
+      // 2-9-2026: la guia salio con "5023-0987" en vez de "3098-7769").
+      // Mandando ya el numero local de 8 digitos no hay nada que cortar.
+      telefono = telefonoLocal(c?.phone)
       correo = String(c?.email ?? '')
     }
 
