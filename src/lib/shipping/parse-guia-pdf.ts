@@ -22,8 +22,12 @@ export interface GuiaPdf {
   guia: string
   /** Nombre del destinatario tal como sale impreso. */
   destinatario: string
-  /** Telefono del destinatario ya normalizado, ej. "50230230524". */
-  telefono: string
+  /**
+   * Telefono del destinatario ya normalizado, ej. "50230230524". Null
+   * cuando el campo no se pudo leer con certeza (ver `normalizarTelefono`):
+   * el llamador cae al respaldo por nombre en vez de tirar toda la guia.
+   */
+  telefono: string | null
   /**
    * Lo que la tostaduria escribio en "Referencia 1" (el producto). Sirve
    * para distinguir la guia de una recompra de la de un envio viejo del
@@ -114,7 +118,19 @@ export function extraerTextos(pdf: Buffer): string[] {
  */
 export function normalizarTelefono(crudo: string): string | null {
   const soloDigitos = String(crudo ?? '').replace(/\D/g, '')
-  if (soloDigitos.length === 8) return `502${soloDigitos}`
+  if (soloDigitos.length === 8) {
+    // Guias reales de sept/2026 (Yefer Alvarado y otros 7 el mismo dia)
+    // trajeron el campo de telefono CORTADO a 8 caracteres cuando en
+    // realidad el numero completo llevaba el codigo de pais (11
+    // digitos): quedaba "502" + los primeros 5 digitos del numero real,
+    // perdiendo los ultimos 3. Si a ESO se le antepone otro "502" (como
+    // haria un numero local normal de 8 digitos) sale un telefono de 11
+    // digitos que arranca "502502..." — no existe cliente con ese
+    // numero, es el sintoma del corte. Mejor avisar que no se pudo leer
+    // que mandar a alguien detras de un telefono que no es de nadie.
+    if (soloDigitos.startsWith('502')) return null
+    return `502${soloDigitos}`
+  }
   if (soloDigitos.length === 11 && soloDigitos.startsWith('502')) return soloDigitos
   return null
 }
@@ -165,7 +181,10 @@ export function parseGuiaPdf(pdf: Buffer): GuiaPdf | null {
     }
   }
 
-  if (!telefono || !destinatario) return null
+  // Sin destinatario no hay ni a quien buscar por nombre: ahi si no hay
+  // nada que hacer. Sin telefono todavia se puede intentar por nombre
+  // (ver match-guia.ts), asi que eso solo NO tira el parseo entero.
+  if (!destinatario) return null
 
   const producto = despuesDe(/^Referencia\s*1$/i)
 

@@ -17,6 +17,16 @@ import { loadSheetsWebhook } from '@/lib/sheets/webhook-config'
 /** Etapas donde un pedido puede estar esperando su guia. */
 const ETAPAS_CON_ENVIO = ['Enviado', 'Pedidos Confirmados']
 
+/** Nombre comparable: sin tildes, sin mayusculas, espacios simples. */
+function normalizarNombre(s: string): string {
+  return String(s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ')
+}
+
 type Resultado =
   | { ok: true; dealId: string; guia: string; fila?: number }
   | { ok: false; motivo: string; datos?: GuiaPdf }
@@ -91,15 +101,37 @@ export async function procesarGuiaPdf(
   }
 
   const { guia, telefono, destinatario } = datos
-  const resumen = `Guia ${guia} · ${destinatario} · ${telefono}`
+  const resumen = `Guia ${guia} · ${destinatario} · ${telefono ?? 'sin telefono legible'}`
 
   // 1) El contacto, por telefono.
-  const { data: contacto } = await db
-    .from('contacts')
-    .select('id, name')
-    .eq('account_id', accountId)
-    .eq('phone', telefono)
-    .maybeSingle()
+  let contacto: { id: string; name: string } | null = null
+  if (telefono) {
+    const { data } = await db
+      .from('contacts')
+      .select('id, name')
+      .eq('account_id', accountId)
+      .eq('phone', telefono)
+      .maybeSingle()
+    contacto = data
+  }
+
+  // 2) Sin telefono utilizable, o ninguno con ese numero: se intenta por
+  // el NOMBRE del destinatario, que la guia siempre trae bien. Solo
+  // cuenta si es EXACTO (sin tildes/mayusculas) y hay un unico contacto
+  // con ese nombre — con mas de uno no se adivina, misma regla de oro
+  // que con el telefono.
+  if (!contacto) {
+    const nombreNormalizado = normalizarNombre(destinatario)
+    const { data: candidatosNombre } = await db
+      .from('contacts')
+      .select('id, name')
+      .eq('account_id', accountId)
+    const porNombre = (candidatosNombre ?? []).filter(
+      (c: { id: string; name: string | null }) =>
+        normalizarNombre(c.name ?? '') === nombreNormalizado,
+    )
+    if (porNombre.length === 1) contacto = porNombre[0]
+  }
 
   if (!contacto) {
     await avisar(
@@ -107,12 +139,12 @@ export async function procesarGuiaPdf(
       accountId,
       userId,
       'Guia sin cliente',
-      `${resumen}. Ningun contacto tiene ese telefono. Se dejo el hueco en la hoja.`,
+      `${resumen}. Ningun contacto tiene ese telefono ni ese nombre exacto. Se dejo el hueco en la hoja.`,
     )
     return { ok: false, motivo: 'contacto no encontrado', datos }
   }
 
-  // 2) Sus pedidos que todavia esperan guia.
+  // 3) Sus pedidos que todavia esperan guia.
   const { data: etapas } = await db
     .from('pipeline_stages')
     .select('id, name')
