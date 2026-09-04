@@ -66,6 +66,40 @@ function normalizar(texto: string): string {
     .trim()
 }
 
+/**
+ * Combina una linea nueva de combo (`[fecha] combo`) con el historial ya
+ * guardado.
+ *
+ *   - Historial vacio -> la linea nueva, sola.
+ *   - La linea ya esta tal cual -> no se toca nada.
+ *   - `esPedidoNuevo` -> RECOMPRA genuina: se conserva todo y se agrega la
+ *     linea nueva.
+ *   - si no -> MISMO pedido en curso (el cliente corrigio la molienda,
+ *     cambio de cafe o reafirmo): se REEMPLAZA la ULTIMA linea (la del
+ *     pedido en curso) por la nueva, sea cual sea la fecha de esa ultima
+ *     linea.
+ *
+ * Antes se reemplazaba solo la linea de HOY: si la aclaracion llegaba al
+ * dia siguiente (cruzo medianoche) la linea de ayer se quedaba intacta y
+ * se sumaba una nueva, y el mismo pedido aparecia dos veces en "Pedidos"
+ * — le paso a Geronimo Ramirez C. el 2-3 sept (confirmo el pedido a las
+ * 18:23 y aclaro la molienda a las 21:46 del dia siguiente). La linea que
+ * importa es la ULTIMA, sea cual sea su fecha: es la misma que lee
+ * `ultimoCombo` para decidir si esto es una compra nueva.
+ */
+export function combinarComboHistory(
+  prev: string | null | undefined,
+  line: string,
+  esPedidoNuevo: boolean,
+): string {
+  if (!prev || !prev.trim()) return line
+  if (prev.includes(line)) return prev
+  if (esPedidoNuevo) return `${prev}\n${line}`
+  const lineas = prev.split('\n').filter((l) => l.trim())
+  lineas.pop()
+  return [...lineas, line].join('\n')
+}
+
 /** Ultima linea del historial de combos, sin la fecha de adelante. */
 function ultimoCombo(historial: string | null | undefined): string {
   const linea =
@@ -354,26 +388,7 @@ export async function applyDealUpdates(
       const date = new Date().toISOString().slice(0, 10)
       const line = `[${date}] ${updates.combo}`
       const prev = (deal as { combo_history?: string | null }).combo_history
-      if (!prev || !prev.trim()) {
-        patch.combo_history = line
-      } else if (prev.includes(line)) {
-        patch.combo_history = prev
-      } else if (esPedidoNuevo) {
-        // RECOMPRA genuina: el pedido anterior ya estaba pagado, así que
-        // esto es una orden nueva → se conserva el histórico y se agrega
-        // una línea nueva.
-        patch.combo_history = `${prev}\n${line}`
-      } else {
-        // MISMO pedido en curso (el cliente corrigió la molienda, cambió
-        // de café o reafirmó): el combo que manda el bot es la lista
-        // COMPLETA y actual, así que REEMPLAZA la línea de hoy en vez de
-        // apilar productos. Antes se acumulaban: un cliente que cambiaba
-        // Colosos por África Mía terminaba con los dos en el pedido.
-        const previousDays = prev
-          .split('\n')
-          .filter((l) => l.trim() && !l.startsWith(`[${date}]`))
-        patch.combo_history = [...previousDays, line].join('\n')
-      }
+      patch.combo_history = combinarComboHistory(prev, line, esPedidoNuevo)
     }
 
     // Contra-entrega orders never produce a payment receipt, so they'd
