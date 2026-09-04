@@ -1,11 +1,10 @@
 "use client";
 
 import { useAuth } from "@/hooks/use-auth";
-import { QuickActions } from "@/components/dashboard/quick-actions";
 import { MomentumChart } from "@/components/dashboard/momentum-chart";
 import {
   ActivityChart,
-  PipelineValueBars,
+  MonthlyProfitChart,
   RecentPurchases,
 } from "@/components/dashboard/dashboard-insights";
 import { useTranslations } from "next-intl";
@@ -22,14 +21,11 @@ export default function DashboardPage() {
         <p className="mt-1 text-sm text-muted-foreground">{t("description")}</p>
       </div>
 
-      {/* Quick actions */}
-      <QuickActions />
-
       {/* Fila superior (mismo tamaño que antes): actividad diaria (3 líneas)
-          + valor del pipeline por columna, ambas compactas. */}
+          + ganancia por mes, ambas compactas. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ActivityChart />
-        <PipelineValueBars currency={defaultCurrency} />
+        <MonthlyProfitChart currency={defaultCurrency} />
       </div>
 
       {/* Momentum / proyección de cierre de mes */}
