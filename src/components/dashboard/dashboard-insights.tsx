@@ -16,7 +16,16 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { Activity, BarChart3, ShoppingBag, Loader2, MessageSquare } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  ShoppingBag,
+  Loader2,
+  MessageSquare,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+} from "lucide-react";
 import Link from "next/link";
 
 const DAYS = 30;
@@ -395,6 +404,134 @@ export function PipelineValueBars({ currency }: { currency: string }) {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ganancia por mes — barra apilada: costos (rojo) abajo, ganancia (verde)
+// arriba; el total de la barra es la venta del mes. Ventana de 12 meses
+// que se va corriendo (siempre los últimos 12 con datos). Los números
+// vienen ya calculados de `monthly_profit` (ver src/lib/finance) — no se
+// recalculan en el navegador.
+// ---------------------------------------------------------------------------
+const MESES_VENTANA = 12;
+
+function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+export function MonthlyProfitChart({ currency }: { currency: string }) {
+  const axis = useAxisColor();
+  const [data, setData] = useState<
+    { month: string; costos: number; ganancia: number; ventas: number }[] | null
+  >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const db = createClient();
+      const { data: rows } = await db
+        .from("monthly_profit")
+        .select("month, ventas, costos, ganancia")
+        .order("month", { ascending: true })
+        .limit(MESES_VENTANA);
+      if (cancelled) return;
+      setData(
+        ((rows ?? []) as { month: string; ventas: number; costos: number; ganancia: number }[])
+          .slice(-MESES_VENTANA)
+          .map((r) => ({
+            month: r.month,
+            costos: Number(r.costos) || 0,
+            ganancia: Number(r.ganancia) || 0,
+            ventas: Number(r.ventas) || 0,
+          })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const fmt = (v: number) => formatCurrency(v, currency);
+
+  // % de la ganancia de este mes vs el mes anterior.
+  let variacion: number | null = null;
+  if (data && data.length >= 2) {
+    const actual = data[data.length - 1];
+    const previo = data[data.length - 2];
+    if (previo.ganancia !== 0) {
+      variacion = ((actual.ganancia - previo.ganancia) / Math.abs(previo.ganancia)) * 100;
+    }
+  }
+
+  return (
+    <Card
+      title="Ganancia por mes"
+      subtitle="Venta − costo estimado, últimos 12 meses"
+      icon={Wallet}
+    >
+      {data === null ? (
+        <Loading />
+      ) : (
+        <>
+          {variacion !== null ? (
+            <div
+              className={`mb-2 flex items-center gap-1 text-xs font-medium ${
+                variacion >= 0 ? "text-emerald-500" : "text-red-500"
+              }`}
+            >
+              {variacion >= 0 ? (
+                <TrendingUp className="h-3.5 w-3.5" />
+              ) : (
+                <TrendingDown className="h-3.5 w-3.5" />
+              )}
+              {variacion >= 0 ? "+" : ""}
+              {variacion.toFixed(1)}% vs mes anterior
+            </div>
+          ) : null}
+          <ResponsiveContainer width="100%" height={variacion !== null ? 214 : 240}>
+            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+              <XAxis
+                dataKey="month"
+                tickFormatter={(v) => monthLabel(String(v))}
+                tick={{ fill: axis, fontSize: 11 }}
+              />
+              <YAxis
+                tick={{ fill: axis, fontSize: 10 }}
+                width={58}
+                tickFormatter={(v) => fmt(Number(v))}
+              />
+              <Tooltip
+                labelFormatter={(v) => monthLabel(String(v))}
+                formatter={(v, name) => [fmt(Number(v)), name]}
+                contentStyle={{
+                  background: "var(--popover)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+                labelStyle={{ color: axis }}
+                itemStyle={{ color: axis }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12, color: axis }} />
+              <Bar dataKey="costos" name="Costo" stackId="a" fill="#ef4444" radius={[0, 0, 0, 0]} />
+              <Bar
+                dataKey="ganancia"
+                name="Ganancia"
+                stackId="a"
+                fill={COLORS.ventas}
+                radius={[4, 4, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </>
       )}
     </Card>
   );
