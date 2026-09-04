@@ -13,7 +13,7 @@
 // ===========================================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { margenDelDeal, MARGEN_PROMEDIO_RESPALDO } from './margenes'
+import { margenDelDeal, MARGEN_PROMEDIO_RESPALDO, COSTOS_FIJOS_POR_PEDIDO } from './margenes'
 
 export interface MesGanancia {
   accountId: string
@@ -64,6 +64,10 @@ export function calcularGananciaPorMes(deals: DealRow[]): MesGanancia[] {
       costo = venta * (1 - MARGEN_PROMEDIO_RESPALDO)
       sinDesglose = true
     }
+    // Costos fijos por pedido que la hoja de "Costos Combos" NO incluye en
+    // el margen (guia CAEX, caja, hoja de lino, papel kraft, bono de
+    // empaque) — ver detalle en margenes.ts.
+    costo += COSTOS_FIJOS_POR_PEDIDO
 
     const actual = porMes.get(clave) ?? {
       accountId: d.account_id,
@@ -110,6 +114,33 @@ export async function recalcularGananciaMensual(
   if (error) return { ok: false, error: error.message }
 
   const meses = calcularGananciaPorMes((data ?? []) as DealRow[])
+
+  // Gastos generales del mes que no dependen del pedido (publicidad,
+  // contador, Shopify, herramientas de IA, cuota fija de pasarela) —
+  // se cargan a mano cada mes en `monthly_overhead` (ver Settings >
+  // Finanzas). Un mes sin fila ahi se calcula sin overhead, no se bloquea.
+  const { data: overheads } = await db
+    .from('monthly_overhead')
+    .select('account_id, month, contador, publicidad, shopify, api_ia, pasarela_fija, otros')
+  const overheadPorClave = new Map<string, number>()
+  for (const o of (overheads ?? []) as Record<string, unknown>[]) {
+    const clave = `${o.account_id}|${o.month}`
+    const total =
+      (Number(o.contador) || 0) +
+      (Number(o.publicidad) || 0) +
+      (Number(o.shopify) || 0) +
+      (Number(o.api_ia) || 0) +
+      (Number(o.pasarela_fija) || 0) +
+      (Number(o.otros) || 0)
+    overheadPorClave.set(clave, total)
+  }
+  for (const m of meses) {
+    const overhead = overheadPorClave.get(`${m.accountId}|${m.month}`) ?? 0
+    if (overhead > 0) {
+      m.costos = Math.round((m.costos + overhead) * 100) / 100
+      m.ganancia = Math.round((m.ventas - m.costos) * 100) / 100
+    }
+  }
 
   const filas = meses.map((m) => ({
     account_id: m.accountId,

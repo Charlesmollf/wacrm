@@ -114,4 +114,19 @@ export function margenDelDeal(
  */
 export const MARGEN_PROMEDIO_RESPALDO = 0.38
 
+/**
+ * Costos fijos por pedido que NO estan en el margen del combo (van aparte
+ * en la hoja, seccion "Costos generales del mes"): guia CAEX, caja de
+ * empaque, hoja de lino, papel kraft y el bono de empaque de la tostaduria.
+ * Snapshot leido el 4-9-2026 (calculo de Ganancia Neta Agosto 2026):
+ *   Guia CAEX ....... Q30.00
+ *   Caja Kaffeejager . Q14.50
+ *   Hoja de lino ..... Q1.00
+ *   Papel kraft ...... Q0.50
+ *   Bono de empaque .. Q10.00
+ * "Servicio motorista" y la comision de pasarela (5.5%/transaccion) YA
+ * estan restados dentro del margen del combo — no se duplican aqui.
+ */
+export const COSTOS_FIJOS_POR_PEDIDO = 30 + 14.5 + 1 + 0.5 + 10 // Q56.00
+
 export { ENVIO_COBRADO, ENVIO_COSTO }
