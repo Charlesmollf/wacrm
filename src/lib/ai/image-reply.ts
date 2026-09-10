@@ -186,7 +186,20 @@ export async function dispatchInboundImageToAiReply(
           `molido. Si es un producto que no manejas, ofrece el más parecido de tu ` +
           `catálogo. Si la imagen es un agradecimiento, un sticker o no muestra un ` +
           `producto claro, NO arranques una venta: responde breve y cálido dentro del ` +
-          `hilo que venían hablando.`) +
+          `hilo que venían hablando. ` +
+          `LECTURA DE TEXTO EN LA IMAGEN (critico): si la imagen contiene TEXTO con ` +
+          `datos del cliente — direccion, nombre, telefono, correo o NIT (una nota ` +
+          `escrita, un pin de mapa, una captura de otro chat, una libreta) — LEE ese ` +
+          `texto letra por letra y transcribelo TAL CUAL en la marca [[SET: ...]] ` +
+          `(direccion=, nombre=, nit=), igual que si el cliente lo hubiera escrito en ` +
+          `el chat. NUNCA pongas "[segun imagen del cliente]", "[segun su imagen ` +
+          `anterior]" ni ningun otro relleno o referencia a la imagen como valor de un ` +
+          `campo — eso deja el pedido sin datos reales. Si el texto esta borroso o ` +
+          `incompleto y de verdad no se puede leer con certeza, NO inventes ni pongas ` +
+          `un relleno: omite esa clave en la marca y pidele al cliente que te lo ` +
+          `confirme escrito. En tu respuesta visible, confirmale el dato que leiste ` +
+          `(ej. "Perfecto, anoto su direccion: 3a calle 8-45 zona 3.") en vez de solo ` +
+          `decir "anotado", para que el cliente pueda corregirte si leiste mal algo.`) +
       ` Responde en español, breve y cálido, sin inventar precios.\n\n` +
       DEAL_EXTRACTION_INSTRUCTIONS
 
