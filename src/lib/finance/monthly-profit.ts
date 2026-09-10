@@ -142,16 +142,30 @@ export async function recalcularGananciaMensual(
     }
   }
 
-  const filas = meses.map((m) => ({
-    account_id: m.accountId,
-    month: m.month,
-    ventas: m.ventas,
-    costos: m.costos,
-    ganancia: m.ganancia,
-    pedidos: m.pedidos,
-    pedidos_sin_desglose: m.pedidosSinDesglose,
-    computed_at: new Date().toISOString(),
-  }))
+  // Meses marcados `locked` (numero puesto a mano, ej. desde la hoja de
+  // calculo cuando el CRM no ve todos los pedidos reales) no se recalculan.
+  const { data: bloqueados } = await db
+    .from('monthly_profit')
+    .select('account_id, month')
+    .eq('locked', true)
+  const clavesBloqueadas = new Set(
+    ((bloqueados ?? []) as { account_id: string; month: string }[]).map(
+      (b) => `${b.account_id}|${b.month}`,
+    ),
+  )
+
+  const filas = meses
+    .filter((m) => !clavesBloqueadas.has(`${m.accountId}|${m.month}`))
+    .map((m) => ({
+      account_id: m.accountId,
+      month: m.month,
+      ventas: m.ventas,
+      costos: m.costos,
+      ganancia: m.ganancia,
+      pedidos: m.pedidos,
+      pedidos_sin_desglose: m.pedidosSinDesglose,
+      computed_at: new Date().toISOString(),
+    }))
 
   if (filas.length > 0) {
     const { error: errUpsert } = await db
