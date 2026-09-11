@@ -80,6 +80,7 @@ export async function POST(request: Request, { params }: Params) {
       // can't be used to bypass the per-conversation cap at scale — it's
       // a human choosing to re-engage the assistant.
       update.ai_reply_count = 0
+      update.ai_cap_alert_sent = false
       update.ai_handoff_summary = null
     }
 
