@@ -122,15 +122,30 @@ export async function procesarGuiaPdf(
   // que con el telefono.
   if (!contacto) {
     const nombreNormalizado = normalizarNombre(destinatario)
-    const { data: candidatosNombre } = await db
-      .from('contacts')
-      .select('id, name')
-      .eq('account_id', accountId)
-    const porNombre = (candidatosNombre ?? []).filter(
-      (c: { id: string; name: string | null }) =>
-        normalizarNombre(c.name ?? '') === nombreNormalizado,
+    // Sin `.range()` esto se corta en las primeras 1000 filas (limite por
+    // defecto de PostgREST) — con mas de 1000 contactos en la cuenta (ya
+    // pasamos esa marca) el candidato de verdad puede quedar fuera del
+    // corte y la guia se declara "sin cliente" aunque el contacto SI
+    // exista. Le paso a Ruben Illescas: su guia A417775355-1 no encontro
+    // su propio contacto (creado meses antes, fuera de las primeras 1000)
+    // por esto mismo. Se pagina para traer TODOS, sin excepcion.
+    const candidatosNombre: { id: string; name: string | null }[] = []
+    for (let desde = 0; ; desde += 1000) {
+      const { data: pagina } = await db
+        .from('contacts')
+        .select('id, name')
+        .eq('account_id', accountId)
+        .range(desde, desde + 999)
+      if (!pagina || pagina.length === 0) break
+      candidatosNombre.push(...pagina)
+      if (pagina.length < 1000) break
+    }
+    const porNombre = candidatosNombre.filter(
+      (c) => normalizarNombre(c.name ?? '') === nombreNormalizado,
     )
-    if (porNombre.length === 1) contacto = porNombre[0]
+    if (porNombre.length === 1) {
+      contacto = { id: porNombre[0].id, name: porNombre[0].name ?? '' }
+    }
   }
 
   if (!contacto) {
