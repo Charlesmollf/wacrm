@@ -89,13 +89,28 @@ export async function dispatchInboundImageToAiReply(
 
     const { data: conv } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_cap_alert_sent')
       .eq('id', conversationId)
       .maybeSingle()
     if (!conv) return
     if (conv.assigned_agent_id) return
     if (conv.ai_autoreply_disabled) return
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      // Mismo aviso de una sola vez que en auto-reply.ts (ver ahi el porque).
+      if (!conv.ai_cap_alert_sent) {
+        void notifyHumanNeeded(db, {
+          accountId,
+          conversationId,
+          contactId,
+          preview: `Llego al maximo de ${config.autoReplyMaxPerConversation} respuestas automaticas en esta conversacion.`,
+        })
+        await db
+          .from('conversations')
+          .update({ ai_cap_alert_sent: true })
+          .eq('id', conversationId)
+      }
+      return
+    }
 
     // Fetch the image bytes from Meta and base64-encode for the vision API.
     let base64: string

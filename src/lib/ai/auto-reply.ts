@@ -100,7 +100,7 @@ export async function dispatchInboundToAiReply(
     const { data: conv, error: convErr } = await db
       .from('conversations')
       .select(
-        'assigned_agent_id, ai_autoreply_disabled, ai_reply_count, portero_frenadas',
+        'assigned_agent_id, ai_autoreply_disabled, ai_reply_count, portero_frenadas, ai_cap_alert_sent',
       )
       .eq('id', conversationId)
       .maybeSingle()
@@ -109,7 +109,25 @@ export async function dispatchInboundToAiReply(
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      // Un solo aviso por conversacion: sin esto, cada mensaje nuevo del
+      // cliente (que ya no recibe respuesta) mandaria otro correo. Se
+      // resetea junto con `ai_reply_count` cuando alguien reactiva la IA
+      // en el hilo (ver /api/ai/autoreply/[conversationId]).
+      if (!conv.ai_cap_alert_sent) {
+        void notifyHumanNeeded(db, {
+          accountId,
+          conversationId,
+          contactId,
+          preview: `Llego al maximo de ${config.autoReplyMaxPerConversation} respuestas automaticas en esta conversacion.`,
+        })
+        await db
+          .from('conversations')
+          .update({ ai_cap_alert_sent: true })
+          .eq('id', conversationId)
+      }
+      return
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
