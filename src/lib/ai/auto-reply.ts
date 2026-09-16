@@ -663,10 +663,16 @@ const CUENTA_OFICIAL = '30-3093873-2'
  *
  * Solo toca el resultado de una suma explicita. Un precio suelto, un
  * telefono o una fecha nunca entran: no tienen la forma "n + n = n".
+ *
+ * A Yuls (combo + bolsa suelta) esto no lo agarro: el resultado venia como
+ * "= *Total Q590*" y el patron solo esperaba "= Q590" pegado al signo. La
+ * palabra "Total" y los asteriscos de negrita en medio hacian que ni
+ * siquiera intentara comparar la cuenta. Ahora "=" tolera ese adorno antes
+ * de llegar al monto, sea cual sea el pedido.
  */
 export function enforceSuma(text: string): string {
   const SUMA =
-    /((?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?(?:\s*\+\s*(?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?)+)([^=\n]{0,30}?)(=\s*Q?\s*)(\d{1,6}(?:[.,]\d{1,2})?)/g
+    /((?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?(?:\s*\+\s*(?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?)+)([^=\n]{0,30}?)(=\s*\**\s*(?:total\s*[:=]?\s*)?\**\s*Q?\s*\**\s*)(\d{1,6}(?:[.,]\d{1,2})?)/gi
 
   return text.replace(
     SUMA,
