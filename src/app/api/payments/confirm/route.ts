@@ -46,9 +46,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Deal not found' }, { status: 404 })
     }
 
+    // sold_at es la fecha REAL de venta (ver dashboard-insights.tsx). Si
+    // nunca se guardo, se estampa aqui, al confirmar el pago — que es
+    // cuando de verdad se vendio. Sin esto, cualquier toque posterior al
+    // deal (ej. escribir el numero de guia dias despues) mueve `updated_at`
+    // y el dashboard, que cae a `updated_at` cuando `sold_at` es null,
+    // muestra esa fecha tardia como si fuera la venta. Le paso a Sara
+    // Elena: vendio el 2 de sept, la guia llego el 9, y el dashboard
+    // mostraba el 9 como fecha de compra.
     const { error: updErr } = await supabase
       .from('deals')
-      .update({ payment_status: 'Pagado' })
+      .update({
+        payment_status: 'Pagado',
+        ...(deal.sold_at ? {} : { sold_at: new Date().toISOString() }),
+      })
       .eq('id', dealId)
     if (updErr) {
       return NextResponse.json(
