@@ -676,7 +676,24 @@ export function enforceSuma(text: string): string {
 
   return text.replace(
     SUMA,
-    (completo, sumandos: string, medio: string, igual: string, dicho: string) => {
+    (
+      completo: string,
+      sumandos: string,
+      medio: string,
+      igual: string,
+      dicho: string,
+      offset: number,
+      todo: string,
+    ) => {
+      // La suma tiene que ser la cuenta ENTERA, no la cola de una cuenta mas
+      // larga. En "*Africa Mia* Q400 + *Gesha* Q200 + Q45 envío = Q645" el
+      // nombre del producto corta el patron, y sin esto se tomaba solo
+      // "Q200 + Q45" y el Q645 correcto se "arreglaba" a Q245. Si antes, en
+      // la misma linea y despues del ultimo "=", hay un "+", falta un pedazo
+      // de la cuenta: no se toca.
+      const antes = todo.slice(0, offset).split('\n').pop() ?? ''
+      if (antes.slice(antes.lastIndexOf('=') + 1).includes('+')) return completo
+
       const aNumero = (t: string) =>
         Number(t.replace(/[^\d.,]/g, '').replace(',', '.'))
       const partes = (sumandos.match(/\d{1,6}(?:[.,]\d{1,2})?/g) ?? []).map(aNumero)

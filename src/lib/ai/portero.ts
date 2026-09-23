@@ -250,10 +250,17 @@ export function revisarSalida(texto: string): Veredicto {
   // queda intacto.
   for (const l of lineas) {
     if (l.esperado !== null && l.monto !== l.esperado) {
+      // Se vuelve a revisar el mensaje YA corregido: si una linea estaba
+      // mal, el TOTAL casi siempre tambien ("Gesha — Q400 ... TOTAL: Q845").
+      // Antes se devolvia con la linea arreglada y el total viejo.
+      // Termina solo: cada vuelta deja un numero igual al catalogo o a la
+      // suma, y ese ya no se vuelve a tocar.
+      const arreglado = conNumeroCorregido(texto, l.inicio, l.fin, l.esperado)
+      const siguiente = revisarSalida(arreglado)
       return {
         ok: false,
         motivo: `una línea dice Q${l.monto} y el catálogo son Q${l.esperado}`,
-        corregido: conNumeroCorregido(texto, l.inicio, l.fin, l.esperado),
+        corregido: siguiente.corregido ?? arreglado,
       }
     }
   }

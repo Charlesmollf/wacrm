@@ -115,6 +115,39 @@ export function precioDeBolsas(plano: string): number | null {
   return encontradas > 0 ? cafe : null
 }
 
+/**
+ * ¿El texto trae, ademas del combo, un producto aparte?
+ *
+ * Se parte el texto por `+`, `;` y salto de linea — nunca dentro de un
+ * parentesis, que es aclaracion del producto anterior ("Africa Mia (Gesha
+ * + Kenia SL28)"). Un trozo que nombra una variedad y NO nombra un combo es
+ * una bolsa aparte: "1 bolsa adicional de Gesha", "*Gesha* Q200".
+ *
+ * Ante la duda dice que si: el costo de equivocarse asi es solo que el
+ * candado no corrige ese mensaje; el costo contrario es cobrar mal.
+ */
+function hayProductoAparte(plano: string): boolean {
+  const trozos: string[] = []
+  let actual = ''
+  let profundidad = 0
+  for (const ch of plano) {
+    if (ch === '(') profundidad++
+    else if (ch === ')') profundidad = Math.max(0, profundidad - 1)
+    if (profundidad === 0 && /[+;\n]/.test(ch)) {
+      trozos.push(actual)
+      actual = ''
+    } else {
+      actual += ch
+    }
+  }
+  trozos.push(actual)
+  return trozos.some((t) => {
+    const sinParentesis = t.replace(/\([^)]*\)/g, '')
+    if (CATALOGO.some((c) => c.claves.some((k) => sinParentesis.includes(k)))) return false
+    return VARIEDADES.some(([nombre]) => sinParentesis.includes(nombre))
+  })
+}
+
 /** Totales que el mensaje afirma: "= Q590 total" o "total: Q590". */
 function totalesAfirmados(texto: string) {
   const out: { index: number; texto: string; valor: number }[] = []
@@ -148,6 +181,13 @@ export function precioEsperadoDelCafe(texto: string): number | null {
 
   if (combos.length === 1) {
     const c = combos[0]
+    // Combo + otro producto aparte (una bolsa suelta): esta funcion solo
+    // sabe cobrar el combo, asi que NO se arriesga. Antes devolvia el
+    // precio del combo solo y el candado "corregia" cuentas que estaban
+    // bien: a Alfredo (Africa Mia + 1 Gesha, Q645) le cambio el Gesha a
+    // Q400 y el total a Q445; a Yuls (Mitico Coban + Caturra Roja) le
+    // valido Q590 cuando eran Q710.
+    if (hayProductoAparte(plano)) return null
     return acc === 'prensa' ? c.prensa : acc === 'cafetera' ? c.cafetera : c.solo
   }
 
