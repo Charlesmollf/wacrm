@@ -53,6 +53,10 @@ export interface AiUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  /** Anthropic: tokens del prompt servidos desde el cache (cobrados al 10%). */
+  cacheReadTokens?: number
+  /** Anthropic: tokens escritos al cache en esta llamada (cobrados al 2x, TTL 1h). */
+  cacheWriteTokens?: number
 }
 
 /** Raw text + usage a provider adapter returns before handoff parsing. */

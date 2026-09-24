@@ -5,7 +5,7 @@ import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } from './deal-updates'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
-import { dispatchInboundToAiReply, enforceSuma } from './auto-reply'
+import { dispatchInboundToAiReply } from './auto-reply'
 import { buildCustomerFile } from './customer-file'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import {
@@ -14,7 +14,8 @@ import {
   cobrar,
   textoCarritoParaHistorial,
 } from './carrito'
-import { revisarSalida, formatoWhatsApp } from './portero'
+import { formatoWhatsApp } from './portero'
+import { logAiUsage } from './usage'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -325,6 +326,30 @@ export async function dispatchInboundImageToAiReply(
           `read=${u?.cache_read_input_tokens ?? 0} fresh=${u?.input_tokens ?? 0} ` +
           `output=${u?.output_tokens ?? 0}`,
       )
+      // Las fotos tambien cuestan: antes no se registraban en ai_usage_log.
+      void logAiUsage(db, {
+        accountId,
+        conversationId,
+        mode: 'auto_reply',
+        provider: 'anthropic',
+        model: config.visionModel || config.model,
+        usage: u
+          ? {
+              promptTokens:
+                (u.input_tokens ?? 0) +
+                (u.cache_creation_input_tokens ?? 0) +
+                (u.cache_read_input_tokens ?? 0),
+              completionTokens: u.output_tokens ?? 0,
+              totalTokens:
+                (u.input_tokens ?? 0) +
+                (u.cache_creation_input_tokens ?? 0) +
+                (u.cache_read_input_tokens ?? 0) +
+                (u.output_tokens ?? 0),
+              cacheReadTokens: u.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+            }
+          : null,
+      })
       text = (data?.content ?? [])
         .filter((b) => b.type === 'text' && typeof b.text === 'string')
         .map((b) => b.text)
@@ -373,8 +398,8 @@ export async function dispatchInboundImageToAiReply(
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
-    const finalText = enforceSuma(
-      enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
+    const finalText = enforceBankAccount(
+      stripInternalMarkers(cleanText || deal.cleanText || ''),
     )
 
     // El carrito ya NO decide si el mensaje sale: solo alimenta la tarjeta,
@@ -405,30 +430,8 @@ export async function dispatchInboundImageToAiReply(
       }
     }
 
-    // El portero: revisa el desglose que EL PROPIO MENSAJE escribio contra
-    // el catalogo. Igual que en la ruta de texto, ya no necesita carrito.
+    // Sin portero (ver auto-reply.ts): la respuesta sale como la escribio el modelo.
     let textoAEnviar = finalText
-    if (finalText) {
-      try {
-        const veredicto = revisarSalida(finalText)
-        if (!veredicto.ok) {
-          if (veredicto.corregido) {
-            console.warn(`[portero] numero corregido (${veredicto.motivo}).`)
-            textoAEnviar = veredicto.corregido
-          } else {
-            console.warn(`[portero] no se pudo corregir solo (${veredicto.motivo}), aviso a Jefe.`)
-            void notifyHumanNeeded(db, {
-              accountId,
-              conversationId,
-              contactId,
-              preview: `[portero] ${veredicto.motivo}`,
-            })
-          }
-        }
-      } catch (err) {
-        console.error('[portero] no se pudo revisar la salida:', err)
-      }
-    }
 
     // El formato que WhatsApp entiende, al final de todo.
     textoAEnviar = formatoWhatsApp(textoAEnviar)

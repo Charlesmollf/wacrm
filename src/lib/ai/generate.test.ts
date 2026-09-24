@@ -148,7 +148,13 @@ describe('generateReply — Anthropic', () => {
     expect(res).toEqual({
       text: 'Hi there!',
       handoff: false,
-      usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
+      usage: {
+        promptTokens: 30,
+        completionTokens: 6,
+        totalTokens: 36,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
     })
     const [url, opts] = fetchMock.mock.calls[0]
     expect(url).toContain('api.anthropic.com')

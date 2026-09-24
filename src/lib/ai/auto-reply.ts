@@ -1,6 +1,3 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Desglose } from './caja'
-import { textoDelDesglose } from './caja'
 import { supabaseAdmin } from './admin-client'
 import { loadAiConfig } from './config'
 import { buildCustomerFile } from './customer-file'
@@ -15,7 +12,6 @@ import { extractImageMarkers } from './product-images'
 import { extractDealMarkers, applyDealUpdates } from './deal-updates'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
-import { enforceTotales, enforceAccesorios } from './enforce-totales'
 import {
   pedidoDelDeal,
   carritoDesdeMarca,
@@ -23,7 +19,7 @@ import {
   cobrar,
   textoCarritoParaHistorial,
 } from './carrito'
-import { revisarSalida, formatoWhatsApp } from './portero'
+import { formatoWhatsApp } from './portero'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -304,24 +300,12 @@ export async function dispatchInboundToAiReply(
               text = reintento.text
               handoff = reintento.handoff
             } else {
+              // Sin marca ni al segundo intento: se manda la respuesta del
+              // modelo tal cual. La ficha puede quedar atrasada, pero el
+              // cliente recibe una respuesta de verdad, no un texto armado.
               console.warn(
-                '[ai auto-reply] reintento de [[CARRITO]] tampoco trajo la marca; le pregunto al cliente.',
+                '[ai auto-reply] reintento de [[CARRITO]] tampoco trajo la marca; sale la respuesta original.',
               )
-              const { data: claimado } = await db.rpc('claim_ai_reply_slot', {
-                conversation_id: conversationId,
-                max_replies: config.autoReplyMaxPerConversation,
-              })
-              if (claimado === true) {
-                await engineSendText({
-                  accountId,
-                  userId: configOwnerUserId,
-                  conversationId,
-                  contactId,
-                  text: preguntaDeConfirmacion(previo.desglose),
-                  aiGenerated: true,
-                })
-              }
-              return
             }
           }
         } catch (err) {
@@ -435,12 +419,14 @@ export async function dispatchInboundToAiReply(
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso
     // NO se envía nada. Antes el respaldo mandaba el texto crudo y el
     // cliente llegaba a ver la marca interna en su chat.
-    const finalText = enforceSuma(
-      enforceAccesorios(
-        enforceTotales(
-          enforceBankAccount(stripInternalMarkers(cleanText || deal.cleanText || '')),
-        ),
-      ),
+    //
+    // Sin candados de precios, sumas ni portero: desde el 24-09 el bot corre en
+    // Sonnet 5 y lo que escribe sale tal cual. Esos candados se hicieron para
+    // Haiku y terminaron cambiando cuentas que estaban BIEN (Alfredo, Yuls,
+    // Luis). Solo quedan los que no pueden danar una venta: cuenta bancaria
+    // oficial, marcas internas ocultas y formato de WhatsApp.
+    const finalText = enforceBankAccount(
+      stripInternalMarkers(cleanText || deal.cleanText || ''),
     )
     // ---- EL CARRITO: ya NO decide si el mensaje sale ----------------------
     // Hasta el 1 de septiembre esto alimentaba al portero (ver mas abajo). Un
@@ -476,49 +462,10 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // ---- EL PORTERO -------------------------------------------------------
-    // Revisa el desglose que EL PROPIO MENSAJE escribio, contra el catalogo.
-    // Ya no necesita ningun carrito (ver portero.ts para el porque).
     let textoAEnviar = finalText
-    if (finalText) {
-      try {
-        const veredicto = revisarSalida(finalText)
-        if (!veredicto.ok) {
-          if (veredicto.corregido) {
-            // Se identifico sin ambiguedad CUAL numero esta mal: se corrige
-            // solo ese, el resto del mensaje (tono, saludo) queda intacto.
-            console.warn(`[portero] numero corregido (${veredicto.motivo}).`)
-            textoAEnviar = veredicto.corregido
-          } else {
-            // No hay forma segura de arreglarlo solo (una cuenta bancaria
-            // ajena, un envio duplicado): se manda el mensaje del modelo TAL
-            // CUAL —no se inventa un reemplazo— y se avisa para que lo
-            // revise una persona.
-            console.warn(`[portero] no se pudo corregir solo (${veredicto.motivo}), aviso a Jefe.`)
-            void notifyHumanNeeded(db, {
-              accountId,
-              conversationId,
-              contactId,
-              preview: `[portero] ${veredicto.motivo}`,
-            })
-          }
-          await anotarFrenada(db, conversationId, Number(conv.portero_frenadas ?? 0) + 1)
-        } else if (Number(conv.portero_frenadas ?? 0) > 0) {
-          // Un mensaje limpio borra la cuenta: solo importan las seguidas.
-          await db
-            .from('conversations')
-            .update({ portero_frenadas: 0 })
-            .eq('id', conversationId)
-        }
-      } catch (err) {
-        // Un fallo del portero jamas deja al cliente sin respuesta.
-        console.error('[portero] no se pudo revisar la salida:', err)
-      }
-    }
 
     // Ultimo paso antes de salir: el formato que WhatsApp entiende.
-    // Va aqui, despues del portero, para que tambien limpie el mensaje de
-    // respaldo y no quede un asterisco pegado a nada.
+    // Arregla asteriscos de Markdown y links de pago pegados a negritas.
     textoAEnviar = formatoWhatsApp(textoAEnviar)
 
     if (textoAEnviar) {
@@ -553,44 +500,6 @@ export async function dispatchInboundToAiReply(
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   }
-}
-
-/**
- * Anota que el portero tuvo que intervenir. Solo lleva la cuenta para que
- * quede en el registro (`portero_frenadas`) — NO apaga el auto-reply ni
- * avisa a Jefe. El bot sigue solo: cuando el portero frena, la respuesta que
- * sale ya trae una pregunta de confirmacion (ver mas arriba) o, si no hay
- * carrito de fiar, se le pide al cliente que aclare el cambio exacto. La
- * cuenta se resetea sola en cuanto un mensaje pasa limpio.
- */
-async function anotarFrenada(
-  db: SupabaseClient,
-  conversationId: string,
-  veces: number,
-): Promise<void> {
-  try {
-    await db
-      .from('conversations')
-      .update({ portero_frenadas: veces })
-      .eq('id', conversationId)
-  } catch (err) {
-    console.error('[portero] no se pudo anotar la frenada:', err)
-  }
-}
-
-/**
- * La pregunta que el bot le hace al cliente cuando no logro (ni al segundo
- * intento) declarar el cambio de pedido con la marca [[CARRITO: ...]]. Texto
- * FIJO armado con el desglose ya guardado — no pasa por el modelo, asi que
- * no inventa productos ni totales. El cliente responde y el flujo normal
- * retoma desde ahi.
- */
-export function preguntaDeConfirmacion(actual: Desglose): string {
-  return (
-    'Para no equivocarme, esto es lo que tengo anotado ahorita de su pedido:\n\n' +
-    textoDelDesglose(actual) +
-    '\n\n¿Me puede confirmar exactamente qué cambio quiere hacer sobre esto?'
-  )
 }
 
 /** El pedido en curso trae la marca [[CARRITO: ...]] en algun lado del texto. */
@@ -647,74 +556,6 @@ function stripInternalMarkers(text: string): string {
 
 /** Unica cuenta bancaria real del negocio. */
 const CUENTA_OFICIAL = '30-3093873-2'
-
-/**
- * Candado anti-error de aritmetica.
- *
- * Haiku escribio "Q400 + Q45 de envio = Q390 total". El 390 no salio de
- * sumar: salio de los EJEMPLOS de este mismo prompt (Mitico Coban Q345 ->
- * 390). El modelo copio el ejemplo que mas se le parecia. Lo cacho el
- * cliente, no nosotros.
- *
- * Ensenar la suma con ejemplos invita justo a ese error, y ningun modelo
- * esta libre de el. Asi que aqui no se le pide al modelo que sume bien: se
- * VERIFICA. Si el mensaje dice "a + b = c" y c no es a+b, se corrige c
- * antes de enviarlo.
- *
- * Solo toca el resultado de una suma explicita. Un precio suelto, un
- * telefono o una fecha nunca entran: no tienen la forma "n + n = n".
- *
- * A Yuls (combo + bolsa suelta) esto no lo agarro: el resultado venia como
- * "= *Total Q590*" y el patron solo esperaba "= Q590" pegado al signo. La
- * palabra "Total" y los asteriscos de negrita en medio hacian que ni
- * siquiera intentara comparar la cuenta. Ahora "=" tolera ese adorno antes
- * de llegar al monto, sea cual sea el pedido.
- */
-export function enforceSuma(text: string): string {
-  const SUMA =
-    /((?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?(?:\s*\+\s*(?:Q\s*)?\d{1,6}(?:[.,]\d{1,2})?)+)([^=\n]{0,30}?)(=\s*\**\s*(?:total\s*[:=]?\s*)?\**\s*Q?\s*\**\s*)(\d{1,6}(?:[.,]\d{1,2})?)/gi
-
-  return text.replace(
-    SUMA,
-    (
-      completo: string,
-      sumandos: string,
-      medio: string,
-      igual: string,
-      dicho: string,
-      offset: number,
-      todo: string,
-    ) => {
-      // La suma tiene que ser la cuenta ENTERA, no la cola de una cuenta mas
-      // larga. En "*Africa Mia* Q400 + *Gesha* Q200 + Q45 envío = Q645" el
-      // nombre del producto corta el patron, y sin esto se tomaba solo
-      // "Q200 + Q45" y el Q645 correcto se "arreglaba" a Q245. Si antes, en
-      // la misma linea y despues del ultimo "=", hay un "+", falta un pedazo
-      // de la cuenta: no se toca.
-      const antes = todo.slice(0, offset).split('\n').pop() ?? ''
-      if (antes.slice(antes.lastIndexOf('=') + 1).includes('+')) return completo
-
-      const aNumero = (t: string) =>
-        Number(t.replace(/[^\d.,]/g, '').replace(',', '.'))
-      const partes = (sumandos.match(/\d{1,6}(?:[.,]\d{1,2})?/g) ?? []).map(aNumero)
-      if (partes.length < 2 || partes.some((n) => !Number.isFinite(n))) return completo
-
-      const esperado = partes.reduce((a, b) => a + b, 0)
-      const anunciado = aNumero(dicho)
-      if (!Number.isFinite(anunciado) || Math.abs(anunciado - esperado) < 0.01) {
-        return completo
-      }
-
-      const correcto = Number.isInteger(esperado)
-        ? String(esperado)
-        : esperado.toFixed(2)
-      console.warn(
-        `[ai] suma mal hecha, corregida antes de enviar: "${completo.trim()}" -> ${correcto}`,
-      )
-      return `${sumandos}${medio}${igual}${correcto}`
-    },
-  )
-}
 
 /**
  * Candado anti-alucinación de datos bancarios.

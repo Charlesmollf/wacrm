@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MARCA_CARRITO, RE_PEDIDO_CAMBIA, preguntaDeConfirmacion } from './auto-reply'
-import { desgloseDelPedido } from './carrito'
+import { MARCA_CARRITO, RE_PEDIDO_CAMBIA } from './auto-reply'
 
 /**
  * El caso real que reporto Charles el 1-2 de septiembre: le pidio al bot
@@ -45,20 +44,5 @@ describe('MARCA_CARRITO: detecta si la respuesta trae la marca invisible', () =>
   it('el caso real: la respuesta que le llego al cliente no traia la marca', () => {
     const respuestaSinMarca = 'Le confirmo su pedido:\n\nColosos de América — Q345\nEnvío — Q45\n*TOTAL: Q390*'
     expect(MARCA_CARRITO.test(respuestaSinMarca)).toBe(false)
-  })
-})
-
-/**
- * Cuando el reintento TAMPOCO trae la marca, el bot ya no pasa la
- * conversacion a una persona: le pregunta al cliente el cambio exacto,
- * usando SOLO el desglose ya calculado (nunca el texto del modelo), asi
- * que no puede inventar un producto o un total que no esten en la ficha.
- */
-describe('preguntaDeConfirmacion: el bot pregunta en vez de avisarle a Jefe', () => {
-  it('muestra el pedido actual y pide el cambio exacto, sin depender del modelo', () => {
-    const actual = desgloseDelPedido({ combo_history: '[2026-08-31] 1 Colosos de America' })!
-    const pregunta = preguntaDeConfirmacion(actual)
-    expect(pregunta).toContain('TOTAL: Q390')
-    expect(pregunta).toContain('¿Me puede confirmar exactamente qué cambio quiere hacer')
   })
 })

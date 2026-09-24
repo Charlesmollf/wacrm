@@ -29,6 +29,8 @@ describe('logAiUsage', () => {
       prompt_tokens: 30,
       completion_tokens: 6,
       total_tokens: 36,
+      cache_read_tokens: null,
+      cache_write_tokens: null,
     })
   })
 

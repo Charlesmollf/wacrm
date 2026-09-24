@@ -21,7 +21,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { notifyPaymentToConfirm } from '@/lib/notify/payment-alert'
 import { syncPaymentTag } from '@/lib/crm/payment-tags'
-import { enforceTotalGuardado } from './enforce-totales'
 import { evaluarCierre } from './cerrar-pedido'
 
 /** Instruction block injected into the auto-reply system prompt so the
@@ -360,13 +359,10 @@ export async function applyDealUpdates(
     if (updates.total) {
       const amount = parseFloat(String(updates.total).replace(/[^0-9.]/g, ''))
       if (Number.isFinite(amount) && amount > 0) {
-        // El total que dice el bot se valida contra el producto antes de
-        // guardarlo. A Luisa le dijo Q545 en el chat y guardo 590 en la ficha;
-        // a la Dra. Flor le conto 6 bolsas donde habia 5. Si el producto no
-        // esta en el catalogo, `enforceTotalGuardado` devuelve el monto tal cual.
-        patch.value = String(
-          enforceTotalGuardado(updates.combo ?? comboGuardado, amount) ?? amount,
-          )
+        // Se guarda el total tal como lo dijo el bot (sin candado desde el
+        // 24-09, ver auto-reply.ts). Si hay marca CARRITO, auto-reply lo
+        // sincroniza despues con el total calculado del carrito.
+        patch.value = String(amount)
         const prevSold = (deal as { sold_at?: string | null }).sold_at
         if (esPedidoNuevo) {
           // Compra nueva de verdad (cambio el producto o el monto): se
