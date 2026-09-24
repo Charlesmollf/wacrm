@@ -3,7 +3,9 @@ import { loadAiConfig } from './config'
 import { buildCustomerFile } from './customer-file'
 import { buildConversationContext } from './context'
 import { retrieveAllKnowledge } from './knowledge'
-import { generateReply } from './generate'
+import { generateReply, generarConRespaldo } from './generate'
+import { esperarQueTermine, hayMensajeNuevo } from './espera'
+import { registrarFallo } from './fallos'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { logAiUsage } from './usage'
@@ -29,6 +31,12 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string
+  /** `message.id` de WhatsApp del mensaje que disparo esta respuesta. */
+  waMessageId?: string
+  /** Hora limite (ms epoch). La pasa image-reply cuando cae a texto. */
+  deadline?: number
+  /** true = no esperar al cliente (image-reply ya espero). */
+  sinEspera?: boolean
 }
 
 /**
@@ -54,24 +62,19 @@ export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
   const { accountId, conversationId, contactId, configOwnerUserId } = args
+  // La ruta del webhook muere a los 60 s (maxDuration) sin dejar error.
+  // Todo lo de aqui (espera + modelo + respaldo) tiene que caber en 55 s.
+  const deadline = args.deadline ?? Date.now() + 55_000
+  const db = supabaseAdmin()
 
   try {
-    const db = supabaseAdmin()
-
-    // Debounce rapid-fire bursts: wait a few seconds, and if the customer
-    // sent another message meanwhile, bail — that later message's handler
-    // replies with the full context. Stops the duplicate / partial replies
-    // we got when someone types several lines in a row.
-    const debounceStart = new Date().toISOString()
-    await new Promise((r) => setTimeout(r, 5000))
-    const { data: newerMsgs } = await db
-      .from('messages')
-      .select('id')
-      .eq('conversation_id', conversationId)
-      .eq('sender_type', 'customer')
-      .gt('created_at', debounceStart)
-      .limit(1)
-    if (newerMsgs && newerMsgs.length > 0) return
+    // Esperar a que el cliente termine de escribir (ver espera.ts). Si
+    // llega un mensaje mas nuevo, este handler se retira y el del mensaje
+    // nuevo contesta con todo el contexto.
+    const ancla = args.sinEspera
+      ? await esperarQueTermine(db, conversationId, args.waMessageId, { silencioMs: 0 })
+      : await esperarQueTermine(db, conversationId, args.waMessageId)
+    if (!ancla) return
 
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
@@ -203,24 +206,40 @@ export async function dispatchInboundToAiReply(
     // VOLATIL (nunca se cachea): va DESPUES del prefijo, siempre.
     const systemPrompt = stableSystem + customerContext + orderContext
 
-    // One retry on transient provider failures (overloaded / network
-    // blip): a single hiccup must not leave the customer unanswered.
-    let reply
+    // Si el modelo principal falla, contesta el de respaldo (generate.ts).
+    // Si fallan los dos, se guarda el fallo y se avisa a Jefe por correo:
+    // el cliente nunca debe quedarse en visto sin que nadie se entere.
+    let resultado
     try {
-      reply = await generateReply({
+      resultado = await generarConRespaldo({
         config,
         systemPrompt,
         cachePrefix: stableSystem,
         messages,
+        deadline,
       })
     } catch (genErr) {
-      console.error('[ai auto-reply] generateReply failed, retrying once:', genErr)
-      await new Promise((r) => setTimeout(r, 2000))
-      reply = await generateReply({
-        config,
-        systemPrompt,
-        cachePrefix: stableSystem,
-        messages,
+      console.error('[ai auto-reply] fallaron todos los modelos:', genErr)
+      await registrarFallo(db, {
+        accountId,
+        conversationId,
+        contactId,
+        etapa: 'respaldo',
+        modelo: config.model,
+        error: genErr,
+      })
+      return
+    }
+    const { reply, modelo: modeloUsado } = resultado
+    if (resultado.errorPrincipal) {
+      void registrarFallo(db, {
+        accountId,
+        conversationId,
+        contactId,
+        etapa: 'modelo',
+        modelo: config.model,
+        error: resultado.errorPrincipal,
+        respondioRespaldo: true,
       })
     }
     let { text, handoff } = reply
@@ -236,7 +255,7 @@ export async function dispatchInboundToAiReply(
       conversationId,
       mode: 'auto_reply',
       provider: config.provider,
-      model: config.model,
+      model: modeloUsado,
       usage,
     })
 
@@ -262,7 +281,9 @@ export async function dispatchInboundToAiReply(
     // texto armado por codigo a partir del carrito guardado, asi que no
     // inventa numeros. La proxima respuesta del cliente vuelve a pasar por
     // este mismo camino con normalidad.
-    if (text && !handoff && !MARCA_CARRITO.test(text)) {
+    // Solo si queda tiempo: sin esto el reintento podia pasarse de los 60 s
+    // y el cliente se quedaba sin NINGUNA respuesta.
+    if (text && !handoff && !MARCA_CARRITO.test(text) && deadline - Date.now() > 15_000) {
       const ultimoCliente = [...messages].reverse().find((m) => m.role === 'user')
       if (ultimoCliente && RE_PEDIDO_CAMBIA.test(ultimoCliente.content)) {
         try {
@@ -283,17 +304,18 @@ export async function dispatchInboundToAiReply(
               '[[CARRITO: ...]] con el pedido ACTUALIZADO Y COMPLETO: todo lo que el cliente ya tenia, mas el ' +
               'cambio que acaba de pedir. La marca es obligatoria siempre que haya un pedido en curso.'
             const reintento = await generateReply({
-              config,
+              config: { ...config, model: modeloUsado },
               systemPrompt: systemPrompt + recordatorio,
               cachePrefix: stableSystem,
               messages,
+              timeoutMs: Math.max(5_000, deadline - Date.now() - 5_000),
             })
             void logAiUsage(db, {
               accountId,
               conversationId,
               mode: 'auto_reply',
               provider: config.provider,
-              model: config.model,
+              model: modeloUsado,
               usage: reintento.usage,
             })
             if (reintento.text && MARCA_CARRITO.test(reintento.text)) {
@@ -361,6 +383,11 @@ export async function dispatchInboundToAiReply(
       })
       return
     }
+
+    // Si el cliente escribio mientras se generaba la respuesta, esta ya
+    // quedo vieja: se descarta. El handler del mensaje nuevo genera otra
+    // con TODO el contexto (no se gasta un cupo de respuesta aqui).
+    if (await hayMensajeNuevo(db, conversationId, ancla)) return
 
     // Atomically claim a reply slot: the cap check + increment happen in
     // one UPDATE, so concurrent inbounds can never overshoot the cap. If
@@ -499,6 +526,13 @@ export async function dispatchInboundToAiReply(
     }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
+    await registrarFallo(db, {
+      accountId,
+      conversationId,
+      contactId,
+      etapa: 'dispatch',
+      error: err,
+    })
   }
 }
 

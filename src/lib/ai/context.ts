@@ -95,6 +95,13 @@ export async function buildConversationContext(
       'id, sender_type, content_text, content_type, media_url, reply_to_message_id',
     )
     .eq('conversation_id', conversationId)
+    // Orden de LLEGADA al servidor. `created_at` del cliente es la hora de
+    // WhatsApp y la del bot la del servidor: mezcladas, la respuesta del bot
+    // quedaba DESPUES del mensaje nuevo del cliente y la conversacion
+    // terminaba en "assistant" → Sonnet 5 la rechaza (400 "does not support
+    // assistant message prefill"). Paso el 23-09 21:33. `created_at` desempata
+    // los mensajes viejos (todos tienen el mismo received_at de la migracion).
+    .order('received_at', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(limit)
 

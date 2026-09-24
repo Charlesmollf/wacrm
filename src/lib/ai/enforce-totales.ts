@@ -20,8 +20,8 @@ export interface Combo {
   cafetera: number
   /**
    * Variedades FIJAS que trae el combo (claves de `VARIEDADES`, en
-   * minuscula). El cliente no las elige ni las cambia — vienen todas
-   * siempre. Sirve para que `carrito.ts` sepa que un combo y sus propias
+   * minuscula). El combo trae siempre estas — si el cliente las cambia,
+   * ya no es combo: se cobra como bolsas sueltas. Sirve para que `carrito.ts` sepa que un combo y sus propias
    * variedades no son dos cosas distintas: ver el comentario grande en
    * ese archivo sobre el bug del 2 de septiembre.
    */

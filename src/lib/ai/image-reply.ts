@@ -6,6 +6,7 @@ import { extractDealMarkers, applyDealUpdates, DEAL_EXTRACTION_INSTRUCTIONS } fr
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { buildConversationContext } from './context'
 import { dispatchInboundToAiReply } from './auto-reply'
+import { esperarQueTermine, hayMensajeNuevo } from './espera'
 import { buildCustomerFile } from './customer-file'
 import { notifyHumanNeeded } from '@/lib/notify/human-alert'
 import {
@@ -41,6 +42,8 @@ interface DispatchImageArgs {
   accessToken: string
   /** Optional caption the customer sent with the image. */
   caption?: string
+  /** `message.id` de WhatsApp (para la espera, ver espera.ts). */
+  waMessageId?: string
 }
 
 /**
@@ -66,9 +69,27 @@ export async function dispatchInboundImageToAiReply(
     accessToken,
     caption,
   } = args
+  // Mismo presupuesto que el texto: la ruta muere a los 60 s.
+  const deadline = Date.now() + 55_000
+  // Si la foto falla se contesta por texto, dentro del MISMO presupuesto y
+  // sin volver a esperar al cliente.
+  const porTexto = () =>
+    dispatchInboundToAiReply({
+      accountId,
+      conversationId,
+      contactId,
+      configOwnerUserId,
+      deadline,
+      sinEspera: true,
+    })
 
   try {
     const db = supabaseAdmin()
+
+    // Esperar a que el cliente termine (ej. foto + "cuánto cuesta este?").
+    // Si escribe algo despues, contesta el handler de ese mensaje.
+    const ancla = await esperarQueTermine(db, conversationId, args.waMessageId)
+    if (!ancla) return
 
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
@@ -129,7 +150,7 @@ export async function dispatchInboundImageToAiReply(
       // Vision path broke — fall back to the plain-text auto-reply so
       // the customer still gets an answer instead of silence.
       console.error('[ai image-reply] media fetch failed, falling back to text reply:', err)
-      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+      await porTexto()
       return
     }
 
@@ -300,7 +321,8 @@ export async function dispatchInboundImageToAiReply(
             },
           ],
         }),
-        signal: AbortSignal.timeout(30000),
+        // Deja ~20 s para contestar por texto si la foto falla.
+        signal: AbortSignal.timeout(Math.max(5_000, Math.min(30_000, deadline - Date.now() - 20_000))),
       })
       if (!res.ok) {
         console.error(
@@ -308,7 +330,7 @@ export async function dispatchInboundImageToAiReply(
           res.status,
           await res.text().catch(() => ''),
         )
-        await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+        await porTexto()
       return
       }
       const data = (await res.json().catch(() => null)) as {
@@ -357,14 +379,18 @@ export async function dispatchInboundImageToAiReply(
         .trim()
     } catch (err) {
       console.error('[ai image-reply] vision call failed, falling back to text reply:', err)
-      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+      await porTexto()
       return
     }
 
     if (!text) {
-      await dispatchInboundToAiReply({ accountId, conversationId, contactId, configOwnerUserId })
+      await porTexto()
       return
     }
+
+    // El cliente escribio mientras se miraba la foto: esta respuesta quedo
+    // vieja. La del mensaje nuevo contesta con todo.
+    if (await hayMensajeNuevo(db, conversationId, ancla)) return
 
     // Atomically claim a reply slot (same cap guard the text path uses).
     const { data: claimed, error: claimErr } = await db.rpc(
