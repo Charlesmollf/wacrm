@@ -531,6 +531,7 @@ export function DealForm({
                 <option value="">—</option>
                 <option value="Grano">Grano</option>
                 <option value="Molido">Molido</option>
+                <option value="Mixto">Mixto</option>
               </select>
             </div>
 
