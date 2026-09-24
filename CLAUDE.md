@@ -14,8 +14,12 @@ CRM de WhatsApp (Next.js + Supabase). **El catálogo, los precios y las reglas d
 
 1. **`api/whatsapp/webhook/route.ts`** — entrada de Meta. Captura `ctwa_clid` (anuncios
    Click-to-WhatsApp), detecta comprobantes de pago, reabre chats cerrados si el cliente escribe.
-2. **`lib/ai/auto-reply.ts`** — respuesta de texto. Debounce 5 s (varios mensajes seguidos → una
-   sola respuesta). Arma el prompt en dos partes: prefijo estable (cacheado) + ficha y pedido.
+2. **`lib/ai/auto-reply.ts`** — respuesta de texto. Espera 8 s de silencio que se reinicia con cada
+   mensaje (tope 30 s), comparando por `messages.received_at` (llegada al servidor), no `created_at`
+   (hora de WhatsApp). Si el cliente escribe mientras se genera, la respuesta se descarta (`espera.ts`).
+   Si el modelo falla contesta el respaldo (`AI_FALLBACK_MODEL`, por defecto claude-sonnet-4-5); si
+   fallan los dos → fila en `ai_failures` + correo a Jefe (`fallos.ts`). Todo cabe en 55 s.
+   Arma el prompt en dos partes: prefijo estable (cacheado) + ficha y pedido.
 3. **`lib/ai/image-reply.ts`** — mismo flujo para fotos y stickers, con historial y `postSale`.
 4. **`lib/ai/customer-file.ts`** — la ficha: qué datos hay, cuáles faltan y la regla de estilo que
    impide repetir el resumen en cada mensaje.
