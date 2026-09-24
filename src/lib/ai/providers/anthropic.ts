@@ -45,6 +45,11 @@ function normalizeForAnthropic(messages: ChatMessage[]): ChatMessage[] {
   while (merged.length > 0 && merged[0].role === 'assistant') {
     merged.shift()
   }
+  // La conversacion tiene que terminar en el cliente: Sonnet 5 no acepta
+  // "prefill" (400). Si al final quedo una respuesta nuestra, se quita.
+  while (merged.length > 0 && merged[merged.length - 1].role === 'assistant') {
+    merged.pop()
+  }
   if (merged.length === 0) {
     return [{ role: 'user', content: '(The customer has not sent a message yet.)' }]
   }
