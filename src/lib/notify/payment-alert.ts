@@ -53,7 +53,7 @@ export async function notifyPaymentToConfirm(
       `<p style="margin:0 0 4px"><b>Cliente:</b> ${contactName}</p>` +
       (amount ? `<p style="margin:0 0 4px"><b>Monto:</b> ${amount}${method}</p>` : '') +
       `<p style="margin:12px 0 4px">Entra a <b>Confirmar pagos</b> en el CRM, verifica el pago y márcalo como Pagado.</p>` +
-      `<p style="margin:12px 0"><a href="https://aqua-gaur-598822.hostingersite.com/payments" ` +
+      `<p style="margin:12px 0"><a href="https://crm.kaffeejager.shop/payments" ` +
       `style="background:#16a34a;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;display:inline-block">` +
       `Abrir Confirmar pagos</a></p>` +
       `</div>`

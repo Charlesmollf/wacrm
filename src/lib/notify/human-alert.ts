@@ -24,6 +24,10 @@ export async function notifyHumanNeeded(
     conversationId: string
     contactId?: string | null
     preview?: string | null
+    /** Asunto propio (ej. el bot fallo). Por defecto: "IA en pausa". */
+    asunto?: string
+    /** Linea que explica por que llega el aviso. */
+    motivo?: string
   },
 ): Promise<void> {
   try {
@@ -57,12 +61,16 @@ export async function notifyHumanNeeded(
     }
 
     const preview = (args.preview ?? '').trim().slice(0, 160)
-    const link = `https://aqua-gaur-598822.hostingersite.com/inbox?c=${conversationId}`
-    const subject = `🔔 ${contactName} está esperando respuesta (IA en pausa)`
+    const link = `https://crm.kaffeejager.shop/inbox?c=${conversationId}`
+    const subject =
+      args.asunto?.replace('{cliente}', contactName) ??
+      `🔔 ${contactName} está esperando respuesta (IA en pausa)`
+    const motivo =
+      args.motivo ?? 'La IA está en pausa en esta conversación y el cliente escribió.'
     const html =
       `<div style="font-family:system-ui,Arial,sans-serif;font-size:15px;color:#111">` +
       `<h2 style="margin:0 0 8px">💬 Un cliente necesita tu atención</h2>` +
-      `<p style="margin:0 0 4px">La IA está en pausa en esta conversación y el cliente escribió.</p>` +
+      `<p style="margin:0 0 4px">${motivo}</p>` +
       `<p style="margin:0 0 4px"><b>Cliente:</b> ${contactName}` +
       (contactPhone ? ` · ${contactPhone}` : '') +
       `</p>` +
