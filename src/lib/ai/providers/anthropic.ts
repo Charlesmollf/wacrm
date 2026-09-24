@@ -160,5 +160,11 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
       (data?.usage?.cache_read_input_tokens ?? 0),
     completion: data?.usage?.output_tokens,
   })
+  // Se guarda el reparto del cache en ai_usage_log para poder comprobar con
+  // datos, no con logs sueltos, que el cache esta acertando.
+  if (usage) {
+    usage.cacheReadTokens = data?.usage?.cache_read_input_tokens ?? 0
+    usage.cacheWriteTokens = data?.usage?.cache_creation_input_tokens ?? 0
+  }
   return { text, usage }
 }
