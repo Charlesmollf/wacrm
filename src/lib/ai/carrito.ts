@@ -259,10 +259,14 @@ function carritoDeLista(bruto: string, origen: 'marca' | 'texto'): Carrito | nul
 
         const variedad = buscaVariedad(trozo)
         if (variedad) {
+            // Molienda de ESTA bolsa ("1 Maragogipe (molido)"): se guarda tal
+            // cual para que la tostaduria sepa cual va molida en un pedido Mixto.
+            const detalle = trozoOriginal.match(/\(([^)]*)\)/)?.[1]?.trim()
             items.push({
                 tipo: 'bolsa',
                 nombre: conMayusculas(variedad[0]),
                 cantidad: cuantasUnidades(trozo),
+                ...(detalle ? { detalle } : {}),
             })
             continue
         }
@@ -289,7 +293,7 @@ function carritoDeLista(bruto: string, origen: 'marca' | 'texto'): Carrito | nul
     // cantidades: "1 Pacamara; 1 Pacamara" son dos bolsas.
     const juntos = new Map<string, ItemPedido>()
     for (const it of items) {
-        const llave = `${it.tipo}|${it.nombre}|${it.accesorio ?? 'ninguno'}`
+        const llave = `${it.tipo}|${it.nombre}|${it.accesorio ?? 'ninguno'}|${it.detalle ?? ''}`
         const previo = juntos.get(llave)
         if (previo) previo.cantidad += it.cantidad
         else juntos.set(llave, { ...it })
@@ -386,7 +390,7 @@ export function textoCarritoParaHistorial(carrito: Carrito): string {
         // El detalle (que grano lleva cada bolsa del combo, por ejemplo) queda
         // pegado al nombre entre parentesis: es lo que la tostaduria necesita
         // ver para empacar, y antes se perdia o se convertia en productos falsos.
-        const detalle = it.tipo === 'combo' && it.detalle ? ` (${it.detalle})` : ''
+        const detalle = it.detalle ? ` (${it.detalle})` : ''
         return it.cantidad > 1
         ? `${it.cantidad} ${it.nombre}${sufijo}${detalle}`
             : `${it.nombre}${sufijo}${detalle}`

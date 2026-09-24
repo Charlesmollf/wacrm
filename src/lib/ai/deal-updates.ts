@@ -28,13 +28,14 @@ import { evaluarCierre } from './cerrar-pedido'
  *  agent's voice. Kept here so the prompt and the parser stay in sync. */
 export const DEAL_EXTRACTION_INSTRUCTIONS =
   'EXTRACCION DE DATOS (INVISIBLE): Cuando en la conversacion el cliente indique o tu confirmes cualquiera de estos datos, agrega al FINAL del mensaje UNA sola marca con este formato EXACTO: ' +
-  '[[SET: nombre=...; forma_pago=...; estado_pago=...; molienda=...; direccion=...; nit=...; notas=...]]. ' +
+  '[[SET: nombre=...; correo=...; forma_pago=...; estado_pago=...; molienda=...; direccion=...; nit=...; notas=...]]. ' +
   'Incluye SOLO las claves que conozcas con certeza y omite las demas. ' +
   'Valores permitidos: forma_pago = Link de pago | Transferencia | Contra entrega; estado_pago = Pendiente | Por confirmar (nunca pongas Pagado; SOLO el equipo lo marca a mano); molienda = Grano | Molido | Mixto (usa Mixto SOLO cuando en un mismo pedido unos productos van en grano y otros molidos); ' +
   'direccion = direccion de entrega exacta; nit = NIT para factura; notas = nota o instruccion especial del pedido: REGALOS (formato: Regalo para [destinatario], de parte de [comprador]) y tambien cualquier restriccion de ENTREGA que el cliente mencione (solo puede recibir cierto dia u horario, indicaciones para el mensajero, un lugar de referencia, etc.) — eso tiene que quedar anotado para que el equipo lo respete al despachar; ' +
   'total = monto TOTAL de la venta en quetzales, SOLO EL NUMERO (ej. total=390). Incluye total UNICAMENTE cuando el cliente YA CONFIRMO la compra (acepto pedido y precio); si aun no confirma, NO pongas total. Si el cliente hace OTRA compra despues de una anterior (aunque sea seguido), tratala como VENTA NUEVA: incluye total con el monto de la nueva compra. El sistema reinicia solo el estado de pago a Pendiente para que se confirme el pago de nuevo. Si el cliente solo MODIFICA o REAFIRMA el MISMO pedido (corrige la molienda, aclara un producto, repite lo ya pedido) NO es venta nueva: reenvia la marca CARRITO corregida pero NO incluyas total; el sistema actualiza el pedido en vez de duplicarlo. ' +
   'forma_pago y estado_pago reflejan SIEMPRE la realidad MAS RECIENTE: si el cliente CAMBIA de metodo (dijo Link pero paga por Transferencia, o al reves), actualiza forma_pago al metodo REAL usado. Si el cliente dice que YA PAGO o envia un comprobante/captura de pago (transferencia, deposito, boleta), pon estado_pago=Por confirmar (NUNCA Pagado: un humano confirma el pago manualmente) y forma_pago segun ese comprobante. En pedidos CONTRA ENTREGA no hay comprobante: cuando el cliente confirma la compra (envias total y forma_pago=Contra entrega) el sistema lo manda solo a la cola de confirmacion para que el equipo lo prepare. ' +
   'nombre = nombre y apellido REAL del cliente, tal como el lo escribio. En cuanto te lo diga, incluyelo. ' +
+  'correo = correo electronico del cliente, tal cual lo escribio. En cuanto te lo diga, incluyelo. ' +
   'REGLA DEL NOMBRE: NO puedes cerrar un pedido sin el nombre del cliente. Si vas a confirmar la compra y todavia no sabes como se llama, PIDESELO en esa misma linea ' +
   '(ej. "Perfecto 😊 ¿A nombre de quien preparo el pedido?") y no mandes total hasta tenerlo. El nombre del perfil de WhatsApp NO cuenta como nombre confirmado. ' +
   'REGLA DEL ENVIO (critica): los precios del catalogo son SIN ENVIO. TODO pedido paga Q45 de envio, uno solo por pedido. El total que le das al cliente y el que mandas en total= ' +
@@ -46,7 +47,7 @@ export const DEAL_EXTRACTION_INSTRUCTIONS =
   'Escribe el pedido COMPLETO cada vez, NO solo lo que acaba de cambiar. Si el cliente ya tenia un Intensa Dulzura con prensa y ahora agrega un Maracaturra, la marca es [[CARRITO: 1 Intensa Dulzura con prensa francesa; 1 Maracaturra]]. ' +
   'Separa cada producto con punto y coma. El accesorio de un COMBO va pegado al combo que lo lleva ("con prensa francesa" o "con cafetera italiana"); un combo que va solo no lleva nada. ' +
   'ACCESORIO SUELTO (prensa o cafetera comprada APARTE, junto a bolsas sueltas, sin ir dentro de un combo): agregala como un producto mas de la lista, sola, sin numero de bolsas delante. Ejemplo: 1 Pacamara, 2 Bourbon y una cafetera italiana sueltos -> [[CARRITO: 1 Pacamara; 2 Bourbon; cafetera italiana]]. Sin esta linea el sistema no cobra el accesorio y el pedido sale incompleto: paso de verdad el 1 de septiembre. ' +
-  'COMBOS, CONTENIDO FIJO: cada combo trae SIEMPRE las mismas variedades (Colosos de America = Pacamara+Maracaturra+Maragogipe; Intensa Dulzura = Pacamara+Catuai+Anaerobico; Mitico Coban = Bourbon+Catuai+Caturra Roja; Africa Mia = Gesha+Kenia SL28; Procesos Secretos = Anaerobico+Peaberry). Cuando el cliente pide un combo TAL CUAL, NUNCA anotes esas variedades como productos aparte en la marca CARRITO (eso duplica el pedido y lo cobra de mas): el combo va como UN solo producto de la lista, por su nombre. PEDIDO PERSONALIZADO (SI SE PUEDE, nunca le digas al cliente que no): el cliente puede armar lo que quiera con bolsas sueltas a su precio (Q120; Gesha y Kenia SL28 Q200) y agregar prensa francesa o cafetera italiana si quiere. Si pide un combo CON CAMBIOS (ej. \"quiteme el Pacamara y pongame otro Maracaturra\"), ya NO es ese combo: en la marca CARRITO va cada bolsa como producto suelto y el accesorio como ACCESORIO SUELTO, y se cobra como bolsas sueltas. Ej.: [[CARRITO: 2 Maracaturra; 1 Maragogipe; prensa francesa]]. Si el combo original le sale mas barato, diselo para que elija. Todo pedido armado por el cliente tambien va en caja de regalo. Si dentro de un combo cada bolsa lleva una molienda distinta (ahi es cuando usas molienda=Mixto), acláralo entre parentesis PEGADO al nombre del combo, en la MISMA marca CARRITO: [[CARRITO: 1 Colosos de America (Pacamara grano, Maracaturra grano, Maragogipe molido)]]. Esa aclaracion se guarda tal cual para que el equipo sepa que empacar; no la repartas en productos sueltos. ' +
+  'COMBOS, CONTENIDO FIJO: cada combo trae SIEMPRE las mismas variedades (Colosos de America = Pacamara+Maracaturra+Maragogipe; Intensa Dulzura = Pacamara+Catuai+Anaerobico; Mitico Coban = Bourbon+Catuai+Caturra Roja; Africa Mia = Gesha+Kenia SL28; Procesos Secretos = Anaerobico+Peaberry). Cuando el cliente pide un combo TAL CUAL, NUNCA anotes esas variedades como productos aparte en la marca CARRITO (eso duplica el pedido y lo cobra de mas): el combo va como UN solo producto de la lista, por su nombre. PEDIDO PERSONALIZADO (SI SE PUEDE, nunca le digas al cliente que no): el cliente puede armar lo que quiera con bolsas sueltas a su precio (Q120; Gesha y Kenia SL28 Q200) y agregar prensa francesa o cafetera italiana si quiere. Si pide un combo CON CAMBIOS (ej. \"quiteme el Pacamara y pongame otro Maracaturra\"), ya NO es ese combo: en la marca CARRITO va cada bolsa como producto suelto y el accesorio como ACCESORIO SUELTO, y se cobra como bolsas sueltas. Ej.: [[CARRITO: 2 Maracaturra; 1 Maragogipe; prensa francesa]]. Al cliente contestale CORTO, sin explicarle que ya no es combo y sin ofrecerle el combo original: \"¡Claro que sí! 😊 Le quedaría: Maragogipe + Catuai + Anaerobico = Q360 + Q45 envío = Q405 total\". Todo pedido armado por el cliente tambien va en caja de regalo. MOLIENDA POR BOLSA: si las bolsas sueltas no van todas igual (molienda=Mixto), pon la molienda entre parentesis PEGADA a cada bolsa en la marca CARRITO: [[CARRITO: 1 Maragogipe (molido); 1 Catuai (grano); 1 Anaerobico (grano)]]. Asi la tostaduria sabe que bolsa va molida. Si dentro de un combo cada bolsa lleva una molienda distinta (ahi es cuando usas molienda=Mixto), acláralo entre parentesis PEGADO al nombre del combo, en la MISMA marca CARRITO: [[CARRITO: 1 Colosos de America (Pacamara grano, Maracaturra grano, Maragogipe molido)]]. Esa aclaracion se guarda tal cual para que el equipo sepa que empacar; no la repartas en productos sueltos. ' +
   'Si el cliente se queda sin pedido, escribe [[CARRITO: vacio]]. ' +
   'El sistema calcula el TOTAL a partir de ESTA marca: si le falta un producto o un accesorio suelto, al cliente se le cobra de menos y la tostaduria le manda un pedido incompleto. Es invisible: nunca la expliques ni la menciones.'
 
@@ -124,6 +125,8 @@ function esNombreUsable(nombre: string, telefono: string): boolean {
 export interface DealUpdates {
   /** Nombre real del cliente, dicho por el en el chat. */
   nombre?: string
+  /** Correo del cliente -> contacts.email (antes se pedia y se perdia). */
+  email?: string
   payment_method?: string
   payment_status?: string
   grind?: string
@@ -160,6 +163,7 @@ function mapPaymentStatus(v: string): string {
 }
 function mapGrind(v: string): string {
   const s = v.toLowerCase()
+  if (s.includes('mixt')) return 'Mixto'
   if (s.includes('molid')) return 'Molido'
   if (s.includes('grano')) return 'Grano'
   return v.trim()
@@ -180,6 +184,10 @@ export function extractDealMarkers(text: string): ExtractedDealData {
       switch (key) {
         case 'nombre':
           updates.nombre = val
+          break
+        case 'correo':
+        case 'email':
+          if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) updates.email = val.toLowerCase()
           break
         case 'forma_pago':
           updates.payment_method = mapPaymentMethod(val)
@@ -239,8 +247,23 @@ export async function applyDealUpdates(
       updates.notes ||
       updates.combo ||
       updates.total ||
-      updates.nombre
+      updates.nombre ||
+      updates.email
     if (!hasField) return
+
+    // --- CORREO DEL CLIENTE ----------------------------------------
+    // El bot lo pedia pero no tenia donde guardarlo: se perdia. Va al
+    // contacto (tambien mejora el match de Meta CAPI).
+    if (updates.email) {
+      try {
+        await db
+          .from('contacts')
+          .update({ email: updates.email, updated_at: new Date().toISOString() })
+          .eq('id', contactId)
+      } catch (e) {
+        console.error('[deal-updates] no se pudo guardar el correo:', e)
+      }
+    }
 
     // --- NOMBRE DEL CLIENTE ---------------------------------------
     // Cuando el cliente dice como se llama hay que guardarlo en su ficha;

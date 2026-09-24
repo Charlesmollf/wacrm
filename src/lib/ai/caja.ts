@@ -37,9 +37,10 @@ export interface ItemPedido {
    */
   accesorio?: Accesorio
   /**
-   * Solo para combos: aclaracion en texto libre pegada al pedido (por
+   * Aclaracion en texto libre pegada al producto (por
    * ejemplo, que grano lleva cada bolsa dentro de un combo con molienda
-   * Mixto: "Pacamara grano, Maracaturra grano, Maragogipe molido"). No
+   * Mixto: "Pacamara grano, Maracaturra grano, Maragogipe molido"; o la
+   * molienda de una bolsa suelta: "molido"). No
    * afecta el precio, es solo para que quede registrado que trae cada
    * bolsa. Ver `carrito.ts` sobre por que esto existe.
    */
