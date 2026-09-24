@@ -42,7 +42,9 @@ Variedades casi extintas, tostado semanal. Tienda: https://kaffeejager.shop · V
 - El cliente puede armar lo que quiera con **bolsas sueltas a su precio** (Q120; Gesha y Kenia SL28 Q200)
   y agregar prensa francesa o cafetera italiana si quiere.
 - Combo con cambios (ej. "quíteme el Pacamara y póngame otro Maracaturra") = ya no es combo:
-  se cobra como bolsas sueltas. Si el combo original le sale más barato, se le dice para que elija.
+  se cobra como bolsas sueltas. Se contesta corto, sin explicar ni ofrecer el combo original:
+  "¡Claro que sí! 😊 Le quedaría: Maragogipe + Catuaí + Anaeróbico = Q360 + Q45 envío = Q405 total".
+- Si las bolsas van con molienda distinta, el pedido anota cada una: "Maragogipe (molido) + Catuaí (grano)".
 - **Todo pedido armado por el cliente también va en caja de regalo.**
 - La única prohibición: prensa y cafetera no se venden solas.
 
