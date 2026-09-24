@@ -1049,6 +1049,7 @@ async function processMessage(
         mediaId: inboundMediaId,
         accessToken,
         caption: inboundText.trim() || undefined,
+        waMessageId: message.id,
       })
     } else if (inboundText.trim()) {
       await dispatchInboundToAiReply({
@@ -1056,6 +1057,7 @@ async function processMessage(
         conversationId: conversation.id,
         contactId: contactRecord.id,
         configOwnerUserId,
+        waMessageId: message.id,
       })
     }
   }
