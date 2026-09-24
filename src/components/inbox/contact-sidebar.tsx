@@ -356,6 +356,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                     <option value="">Grano o molido</option>
                     <option value="Grano">Grano</option>
                     <option value="Molido">Molido</option>
+                    <option value="Mixto">Mixto</option>
                   </select>
                   <textarea
                     value={address}
