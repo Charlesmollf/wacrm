@@ -25,7 +25,10 @@ export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 
 /** Cap on generated reply length — keeps WhatsApp replies short and
  *  bounds token spend on the caller's own key. */
-export const MAX_OUTPUT_TOKENS = 1024
+// Sonnet 5 gasta parte de este tope pensando antes de escribir: con 1024
+// a veces no le quedaba nada para el texto ("empty response", 25-09) o
+// cortaba el mensaje a la mitad. Solo se cobra lo que de verdad usa.
+export const MAX_OUTPUT_TOKENS = 4096
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 // 80 messages ≈ a week of a typical sales thread. A wide window is what

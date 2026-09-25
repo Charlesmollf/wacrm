@@ -76,7 +76,7 @@ export function parseGeneration(
 }
 
 /**
- * MODELO DE RESPALDO. Si el modelo principal falla (caido, "temporarily
+ * SEGUNDO INTENTO. Si el modelo principal falla (caido, "temporarily
  * unavailable", timeout), el cliente NO se queda sin respuesta: se contesta
  * con otro modelo. El 23-09 Sonnet 5 dio timeouts y el cliente quedo en
  * visto sin que nadie se enterara.
@@ -86,7 +86,9 @@ export function modeloDeRespaldo(config: AiConfig): string | null {
   const env = process.env.AI_FALLBACK_MODEL?.trim()
   if (env) return env.toLowerCase() === 'none' ? null : env
   if (config.provider !== 'anthropic') return null
-  return config.model === 'claude-sonnet-4-5' ? 'claude-haiku-4-5' : 'claude-sonnet-4-5'
+  // Jefe (25-09): todo en Sonnet 5. El respaldo es un segundo intento con
+  // el MISMO modelo; si tambien falla, queda en ai_failures y llega correo.
+  return config.model
 }
 
 export interface ResultadoConRespaldo {

@@ -302,7 +302,7 @@ export async function dispatchInboundImageToAiReply(
                     : []),
                 ]
               : system,
-          max_tokens: 1024,
+          max_tokens: 4096,
           messages: [
             ...priorMsgs,
             {
