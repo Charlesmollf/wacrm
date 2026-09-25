@@ -12,6 +12,7 @@ const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 
 interface AnthropicResponse {
+  stop_reason?: string
   content?: { type?: string; text?: string }[]
   usage?: {
     input_tokens?: number
@@ -137,7 +138,10 @@ export async function generateAnthropic(args: ProviderArgs): Promise<ProviderRes
     .join('')
     .trim()
   if (!text) {
-    throw new AiError('Anthropic returned an empty response.', {
+    // Sin texto: dejar rastro de POR QUE (tope de tokens, rechazo, solo
+    // bloques de pensamiento...). Antes solo decia "empty response".
+    const tipos = (data?.content ?? []).map((b) => b.type).join(',') || 'ninguno'
+    throw new AiError(`Anthropic returned an empty response (stop_reason=${data?.stop_reason ?? '?'}, bloques=${tipos}, output=${data?.usage?.output_tokens ?? '?'}).`, {
       code: 'empty_response',
     })
   }
