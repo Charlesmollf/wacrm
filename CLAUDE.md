@@ -17,7 +17,7 @@ CRM de WhatsApp (Next.js + Supabase). **El catálogo, los precios y las reglas d
 2. **`lib/ai/auto-reply.ts`** — respuesta de texto. Espera 8 s de silencio que se reinicia con cada
    mensaje (tope 30 s), comparando por `messages.received_at` (llegada al servidor), no `created_at`
    (hora de WhatsApp). Si el cliente escribe mientras se genera, la respuesta se descarta (`espera.ts`).
-   Si el modelo falla contesta el respaldo (`AI_FALLBACK_MODEL`, por defecto claude-sonnet-4-5); si
+   Si el modelo falla, segundo intento con el mismo Sonnet 5 (`AI_FALLBACK_MODEL` lo cambia); si
    fallan los dos → fila en `ai_failures` + correo a Jefe (`fallos.ts`). Todo cabe en 55 s.
    Arma el prompt en dos partes: prefijo estable (cacheado) + ficha y pedido.
 3. **`lib/ai/image-reply.ts`** — mismo flujo para fotos y stickers, con historial y `postSale`.
