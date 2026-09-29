@@ -105,7 +105,13 @@ export async function buildCustomerFile(
       !esRelleno &&
       soloDigitos(nombreGuardado) !== soloDigitos(String(cont?.phone ?? '')) &&
       (yaLoConocemos || nombreGuardado.toLowerCase() !== perfilWa.toLowerCase())
-    if (nombreSirve) tiene['nombre'] = nombreGuardado
+    // Nombre Y apellido: la guia de Cargo Expreso lo necesita. El 26-09
+    // Rodrigo ("Rodrigo Ch") cerro sin que nadie le pidiera el apellido.
+    const partes = nombreGuardado.split(/\s+/).filter(Boolean)
+    const tieneApellido = partes.length >= 2 && partes[partes.length - 1].replace(/[^\p{L}]/gu, '').length >= 3
+    if (nombreSirve && tieneApellido) tiene['nombre'] = nombreGuardado
+    else if (nombreSirve)
+      tiene['nombre (FALTA EL APELLIDO: pidele nombre y apellido completos)'] = nombreGuardado
     else if (nombreGuardado)
       tiene['nombre (SIN CONFIRMAR, es el perfil de WhatsApp)'] = nombreGuardado
     if (cont?.phone) tiene['telefono'] = String(cont.phone)
@@ -164,7 +170,7 @@ export async function buildCustomerFile(
       `1. Cada dato que el cliente manda se guarda SOLO en el CRM. NUNCA se lo repitas de vuelta.\n` +
       `2. DATOS EN UN SOLO MENSAJE: en cuanto el cliente elige producto, pide TODO lo que falte de la lista de arriba\n` +
       `   en UN solo mensaje ordenado, un dato por linea, SOLO los que falten:\n` +
-      `   👤 Nombre completo\n` +
+      `   👤 Nombre y apellido\n` +
       `   📧 Correo\n` +
       `   📍 Direccion exacta\n` +
       `   ⚙️ ¿Grano o molido?\n` +

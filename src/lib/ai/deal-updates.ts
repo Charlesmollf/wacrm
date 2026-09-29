@@ -506,6 +506,23 @@ export async function applyDealUpdates(
       patch.payment_status = 'Pendiente'
     }
 
+    // CANDADO: sin producto, forma de pago y direccion el pedido NO entra a
+    // la cola. El 28-09 Patty solo dijo "molido" y el pedido paso a Pedidos
+    // Confirmados sin nombre completo, direccion ni forma de pago.
+    if (patch.payment_status === 'Por confirmar') {
+      const falta: string[] = []
+      if (!(patch.combo_history ?? (deal as { combo_history?: string | null }).combo_history))
+        falta.push('producto')
+      if (!effectiveMethod) falta.push('forma de pago')
+      if (!(patch.address ?? (deal as { address?: string | null }).address)) falta.push('direccion')
+      if (falta.length > 0) {
+        console.warn(
+          `[deal-updates] deal ${deal.id}: falta ${falta.join(', ')}; se queda en Pendiente en vez de entrar a Confirmar pagos`,
+        )
+        patch.payment_status = 'Pendiente'
+      }
+    }
+
     // Never drag an already-PAID order back into the confirmation queue
     // unless this same message carries a NEW confirmed total (a genuinely
     // new purchase). A late "ya pagué", a re-sent receipt, or a delivery

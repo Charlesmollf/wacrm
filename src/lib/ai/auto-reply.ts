@@ -491,6 +491,34 @@ export async function dispatchInboundToAiReply(
 
     let textoAEnviar = finalText
 
+    // LINK DE PAGO SIEMPRE QUE SE CIERRA CON LINK. El 26-09 Rodrigo cerro
+    // "mismo pago con Link" y el bot nunca le mando el link: el pedido salio
+    // sin pagar. Si en este mensaje se cierra o se elige Link de pago y el
+    // texto no trae el link, lo agrega el codigo (no depende del modelo).
+    try {
+      const eligeLink = /link/i.test(deal.updates.payment_method ?? '')
+      if ((eligeLink || deal.updates.total) && !/pagalo\.co/i.test(textoAEnviar)) {
+        const { data: fila } = await db
+          .from('deals')
+          .select('payment_method, value')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (/link/i.test(String(fila?.payment_method ?? ''))) {
+          const monto = Number(fila?.value ?? 0)
+          textoAEnviar =
+            (textoAEnviar ? textoAEnviar + '\n\n' : '') +
+            '💳 Link de pago (solo VISA): https://sp.pagalo.co/kaffeejager-roastery' +
+            (monto > 0 ? `\nMonto a pagar: Q${monto}` : '') +
+            '\nCuando pague, me manda la captura del comprobante 🙏'
+        }
+      }
+    } catch (err) {
+      console.error('[ai auto-reply] no se pudo revisar el link de pago:', err)
+    }
+
     // Ultimo paso antes de salir: el formato que WhatsApp entiende.
     // Arregla asteriscos de Markdown y links de pago pegados a negritas.
     textoAEnviar = formatoWhatsApp(textoAEnviar)

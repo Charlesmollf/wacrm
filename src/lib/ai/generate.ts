@@ -86,9 +86,10 @@ export function modeloDeRespaldo(config: AiConfig): string | null {
   const env = process.env.AI_FALLBACK_MODEL?.trim()
   if (env) return env.toLowerCase() === 'none' ? null : env
   if (config.provider !== 'anthropic') return null
-  // Jefe (25-09): todo en Sonnet 5. El respaldo es un segundo intento con
-  // el MISMO modelo; si tambien falla, queda en ai_failures y llega correo.
-  return config.model
+  // Jefe (25-09): todo en Sonnet. El respaldo es un segundo intento con
+  // el mismo modelo; Sonnet 5.5 (29-09, recien salido) cae a Sonnet 5 por
+  // si el modelo nuevo falla. Si tambien falla: ai_failures + correo.
+  return config.model === 'claude-sonnet-5-5' ? 'claude-sonnet-5' : config.model
 }
 
 export interface ResultadoConRespaldo {
