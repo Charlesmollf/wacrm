@@ -8,6 +8,7 @@ import { esperarQueTermine, hayMensajeNuevo } from './espera'
 import { registrarFallo } from './fallos'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
+import { construirContextoPedido, type DealParaContexto } from './pedido-contexto'
 import { logAiUsage } from './usage'
 import { engineSendText, engineSendMedia } from '@/lib/flows/meta-send'
 import { extractImageMarkers } from './product-images'
@@ -149,28 +150,14 @@ export async function dispatchInboundToAiReply(
     try {
       const { data: lastDeal } = await db
         .from('deals')
-        .select('value, payment_status, payment_method, combo_history, notes, created_at')
+        .select('value, payment_status, payment_method, combo_history, notes, created_at, sold_at')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
       if (lastDeal && (lastDeal.value || lastDeal.payment_status)) {
-        const lastCombo =
-          (lastDeal.combo_history || '').trim().split('\n').pop() || '—'
-        orderContext =
-          `\n\nPEDIDO ACTUAL DE ESTE CLIENTE SEGUN EL CRM (fuente de verdad, puede ser de dias atras): ` +
-          `producto: ${lastCombo}; total: Q${lastDeal.value ?? 0}; ` +
-          `estado de pago: ${lastDeal.payment_status ?? 'sin registrar'}; ` +
-          `forma de pago: ${lastDeal.payment_method ?? '—'}; ` +
-          `registrado el: ${String(lastDeal.created_at).slice(0, 10)}` +
-          (lastDeal.notes ? `; nota: ${lastDeal.notes}` : '') +
-          `. REGLA CRITICA: si el cliente pregunta por la entrega, el estado, o manda un pago/comprobante ` +
-          `que corresponde a ESTE pedido (aunque hayan pasado dias), relacionalo con el pedido EXISTENTE: ` +
-          `NO lo confirmes de nuevo, NO emitas total, y si el estado ya es "Por confirmar" o "Pagado" NO ` +
-          `pongas estado_pago otra vez. Trata la conversacion como VENTA NUEVA solo si el cliente pide ` +
-          `explicitamente comprar OTRA vez. Si tienes duda, pregunta con comunicacion asertiva, por ejemplo: ` +
-          `"¿Me confirma si se refiere a su pedido anterior o desea hacer un pedido nuevo?"`
+        orderContext = construirContextoPedido(lastDeal as DealParaContexto)
       }
     } catch {
       // best-effort — a failed lookup must never block the reply
