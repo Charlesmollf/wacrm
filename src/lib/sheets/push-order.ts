@@ -44,7 +44,41 @@ function productoActual(historial: string | null | undefined): string {
   const items = Array.from(
     new Set(delDia.map((l) => l.replace(/^\[[^\]]*\]\s*/, '').trim()).filter(Boolean)),
   )
-  return items.join(' + ')
+  return items.map(conPaquetes).join(' + ')
+}
+
+/**
+ * Cuantos paquetes (bolsas de 400 g) trae un combo. La tostaduria arma el
+ * pedido por paquetes: "Highland Coban" solo no le dice que son 4 (Marlen
+ * Perdomo, 29-09). Combo #N = N paquetes; los combos con nombre, segun el
+ * catalogo (MANUAL.md).
+ */
+export function paquetesDeCombo(segmento: string): number | null {
+  const t = segmento
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+  const num = t.match(/combo\s*#?\s*([1-9])\b/)
+  if (num) return Number(num[1])
+  if (/highland/.test(t)) return 4
+  if (/colosos|intensa dulzura|mitico coban/.test(t)) return 3
+  if (/africa mia|procesos secretos/.test(t)) return 2
+  return null
+}
+
+/** Agrega "(N paquetes)" a cada combo del texto; lo demas queda igual. */
+export function conPaquetes(item: string): string {
+  return item
+    .split(/\s\+\s/)
+    .map((seg) => {
+      if (/\(\s*\d+\s*paquetes?\s*\)/i.test(seg)) return seg
+      const n = paquetesDeCombo(seg)
+      if (!n) return seg
+      const cant = seg.match(/^\s*(\d+)\s+\S/)
+      const total = cant ? n * Number(cant[1]) : n
+      return `${seg} (${total} paquetes)`
+    })
+    .join(' + ')
 }
 
 /** dd/mm/aaaa en hora de Guatemala (UTC-6), como lo lee la tostaduria. */
