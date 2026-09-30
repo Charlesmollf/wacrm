@@ -52,7 +52,7 @@ export async function buildCustomerFile(
         .limit(2),
       db
         .from('deals')
-        .select('address, grind, nit, payment_method, payment_status, combo_history, value')
+        .select('address, grind, nit, payment_method, payment_status, combo_history, value, sold_at, created_at')
         .eq('account_id', accountId)
         .eq('contact_id', contactId)
         .order('created_at', { ascending: false })
@@ -118,7 +118,17 @@ export async function buildCustomerFile(
     if (cont?.email) tiene['correo'] = String(cont.email)
     if (deal?.address) tiene['direccion'] = String(deal.address)
     if (deal?.grind) tiene['grano o molido'] = String(deal.grind)
-    if (ultimoCombo) tiene['producto'] = ultimoCombo
+    // Un pedido PAGADO de hace mas de 7 dias esta cerrado: NO es el pedido
+    // actual. Si se cuenta como 'producto', el bot cree que el cliente ya lo
+    // pidio y le suma lo nuevo encima (30-09: Chavez pidio 2 bolsas de
+    // cardamomo y el bot respondio "ya lo tiene incluido en su pedido actual
+    // junto al Mitico Coban", que era de julio).
+    const fechaVenta = new Date(String(deal?.sold_at || deal?.created_at || '')).getTime()
+    const diasVenta = Number.isNaN(fechaVenta) ? 0 : (Date.now() - fechaVenta) / 86_400_000
+    const pedidoCerrado = /pagad/i.test(String(deal?.payment_status ?? '')) && diasVenta > 7
+    if (ultimoCombo && pedidoCerrado)
+      tiene['compra anterior (YA CERRADA hace ' + Math.floor(diasVenta) + ' dias, NO es el pedido actual)'] = ultimoCombo
+    else if (ultimoCombo) tiene['producto'] = ultimoCombo
     if (deal?.payment_method) tiene['forma de pago'] = String(deal.payment_method)
     if (deal?.nit) tiene['NIT'] = String(deal.nit)
 
