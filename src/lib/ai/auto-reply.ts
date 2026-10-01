@@ -452,7 +452,7 @@ export async function dispatchInboundToAiReply(
       try {
         const { data: filaPedido } = await db
           .from('deals')
-          .select('id, value')
+          .select('id, value, payment_status')
           .eq('account_id', accountId)
           .eq('contact_id', contactId)
           .order('created_at', { ascending: false })
@@ -465,9 +465,26 @@ export async function dispatchInboundToAiReply(
           // mientras la caja decia Q490: el cliente y la tostaduria leian
           // numeros distintos del mismo pedido.
           if (desglose && Number(filaPedido.value ?? 0) !== desglose.total) {
+            // PEDIDO NUEVO SOBRE UNO YA PAGADO. El deal se reutiliza (nunca se
+            // crean deals nuevos), y el bot solo manda `total` en el SET cuando
+            // el cliente ya confirmo. Antes de eso el carrito cambia el monto
+            // pero el estado seguia "Pagado" del pedido viejo: el 01-10 Maria
+            // Teresa pidio 2 cardamomos (Q285) y la tarjeta decia Pagado, asi
+            // que nunca entro a Confirmar pagos. Si el monto cambia sobre un
+            // pedido Pagado, es una compra nueva: se reinicia el ciclo de pago.
+            const eraPagado = /pagad/i.test(String(filaPedido.payment_status ?? ''))
             await db
               .from('deals')
-              .update({ value: desglose.total })
+              .update(
+                eraPagado
+                  ? {
+                      value: desglose.total,
+                      payment_status: 'Pendiente',
+                      sold_at: new Date().toISOString(),
+                      confirm_requested_at: null,
+                    }
+                  : { value: desglose.total },
+              )
               .eq('id', filaPedido.id)
           }
         }
