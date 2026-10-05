@@ -50,8 +50,9 @@ function productoActual(historial: string | null | undefined): string {
 /**
  * Cuantos paquetes (bolsas de 400 g) trae un combo. La tostaduria arma el
  * pedido por paquetes: "Highland Coban" solo no le dice que son 4 (Marlen
- * Perdomo, 29-09). Combo #N = N paquetes; los combos con nombre, segun el
- * catalogo (MANUAL.md).
+ * Perdomo, 29-09). Solo se aclara en los que NO dicen cuantos son: "Combo #N"
+ * y "Highland Coban". Los combos con nombre (Mitico Coban, Colosos, etc.) van
+ * limpios: agregarles "(3 paquetes)" parecia que pedian tres cosas (5-10).
  */
 export function paquetesDeCombo(segmento: string): number | null {
   const t = segmento
@@ -61,8 +62,6 @@ export function paquetesDeCombo(segmento: string): number | null {
   const num = t.match(/combo\s*#?\s*([1-9])\b/)
   if (num) return Number(num[1])
   if (/highland/.test(t)) return 4
-  if (/colosos|intensa dulzura|mitico coban/.test(t)) return 3
-  if (/africa mia|procesos secretos/.test(t)) return 2
   return null
 }
 

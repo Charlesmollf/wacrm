@@ -11,10 +11,9 @@ describe('conPaquetes', () => {
     expect(conPaquetes('Combo3')).toBe('Combo3 (3 paquetes)')
   })
   it('combos con nombre y suma', () => {
-    expect(conPaquetes('Intensa Dulzura + Colosos de América')).toBe(
-      'Intensa Dulzura (3 paquetes) + Colosos de América (3 paquetes)',
-    )
-    expect(conPaquetes('Africa Mia con cafetera italiana')).toBe('Africa Mia con cafetera italiana (2 paquetes)')
+    expect(conPaquetes('Intensa Dulzura + Colosos de América')).toBe('Intensa Dulzura + Colosos de América')
+    expect(conPaquetes('Mítico Cobán')).toBe('Mítico Cobán')
+    expect(conPaquetes('Africa Mia con cafetera italiana')).toBe('Africa Mia con cafetera italiana')
   })
   it('bolsas sueltas no cambian y no duplica', () => {
     expect(conPaquetes('2 Bourbon + Catuai + Caturra Roja')).toBe('2 Bourbon + Catuai + Caturra Roja')
