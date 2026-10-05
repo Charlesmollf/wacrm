@@ -44,7 +44,31 @@ function productoActual(historial: string | null | undefined): string {
   const items = Array.from(
     new Set(delDia.map((l) => l.replace(/^\[[^\]]*\]\s*/, '').trim()).filter(Boolean)),
   )
-  return items.map(conPaquetes).join(' + ')
+  return sinRepetidos(items).map(conPaquetes).join(' + ')
+}
+
+const plano = (t: string) =>
+  t
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+
+/**
+ * Quita las lineas que son solo una version CORTA de otra del mismo dia.
+ * Cuando el cliente aclara su pedido ("Africa Mia" -> "Africa Mia con prensa")
+ * el historial puede quedar con las dos lineas, y la hoja las sumaba como si
+ * fueran 2 combos (Tania Riveiro 30-09, Maria Teresa 01-10: "Cardamomo + 2
+ * Cardamomo"). Se queda la linea mas completa.
+ */
+export function sinRepetidos(items: string[]): string[] {
+  return items.filter(
+    (it, i) =>
+      !items.some(
+        (otro, j) =>
+          j !== i && plano(otro).length > plano(it).length && plano(otro).includes(plano(it)),
+      ),
+  )
 }
 
 /**
