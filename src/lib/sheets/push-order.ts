@@ -123,7 +123,7 @@ export function telefonoLocal(phone: string | null | undefined): string {
   return /^502\d{8}$/.test(t) ? t.slice(3) : t
 }
 
-export async function pushOrderToSheet(
+async function intentarPush(
   db: SupabaseClient,
   accountId: string,
   deal: OrderForSheet,
@@ -211,4 +211,36 @@ export async function pushOrderToSheet(
     console.error('[sheets] no se pudo agregar el pedido:', err)
     return { ok: false, reason: err instanceof Error ? err.message : 'excepcion' }
   }
+}
+
+/**
+ * Manda el pedido a la hoja con UN reintento y deja constancia en el deal
+ * (`sheet_pushed_at` / `sheet_error`). Antes un fallo solo quedaba en un log
+ * que se borra en cada deploy: Lucia Ibarguen (oct) y Lisandro Jacobo (07-10)
+ * no llegaron a la hoja y nadie se entero. Lo que falle lo reintenta
+ * `reconcileSheetPushes` desde el tick.
+ */
+export async function pushOrderToSheet(
+  db: SupabaseClient,
+  accountId: string,
+  deal: OrderForSheet,
+): Promise<{ ok: boolean; reason?: string }> {
+  let r = await intentarPush(db, accountId, deal)
+  if (!r.ok && r.reason !== 'hoja no configurada') {
+    await new Promise((ok) => setTimeout(ok, 2000))
+    r = await intentarPush(db, accountId, deal)
+  }
+  try {
+    await db
+      .from('deals')
+      .update(
+        r.ok
+          ? { sheet_pushed_at: new Date().toISOString(), sheet_error: null }
+          : { sheet_error: String(r.reason ?? 'error').slice(0, 200) },
+      )
+      .eq('id', deal.id)
+  } catch (e) {
+    console.error('[sheets] no se pudo anotar el resultado:', e)
+  }
+  return r
 }
