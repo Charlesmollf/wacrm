@@ -212,3 +212,9 @@ Lo que falta, en orden:
 ⚠️ **No proponer de nuevo** un CRM separado con su propia base y dominio, ni un
 embudo de seguros dentro de la cuenta del café. Los dos caminos se evaluaron y
 se descartaron; el porqué está en `MANUAL-SEGUROS.md` sección 2.
+
+## Recordatorio de pago (pedido en Pendiente, transferencia o link)
+Si el cliente dio todos sus datos y eligio transferencia o link pero NO manda comprobante,
+el pedido queda en **Pendiente**. Hay que mandarle UN recordatorio dentro de las primeras
+24 h (ventana abierta) para que haga su pago. Falta construirlo (barrido tipo
+`lead-followup.ts`, filtrando deals Pendiente con total > 0 y forma_pago Transferencia/Link).
