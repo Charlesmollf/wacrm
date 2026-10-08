@@ -427,7 +427,11 @@ export async function dispatchInboundToAiReply(
 
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
     // Se ESPERA a que el pedido quede guardado antes de mandar el mensaje.
-    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
+    await applyDealUpdates(
+      db,
+      { accountId, contactId, soloConComprobante: true },
+      deal.updates,
+    )
 
     // Texto final ya SIN marcas internas. Si el modelo respondió solo con
     // la marca de datos ([[SET: ...]]), el texto queda vacío: en ese caso

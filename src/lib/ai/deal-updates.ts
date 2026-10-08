@@ -233,7 +233,7 @@ export function extractDealMarkers(text: string): ExtractedDealData {
  */
 export async function applyDealUpdates(
   db: SupabaseClient,
-  args: { accountId: string; contactId: string },
+  args: { accountId: string; contactId: string; soloConComprobante?: boolean },
   updates: DealUpdates,
 ): Promise<void> {
   try {
@@ -493,6 +493,25 @@ export async function applyDealUpdates(
       }
     }
 
+    // CANDADO: transferencia o link de pago NO pasan a "Por confirmar" hasta
+    // que llegue el comprobante. Isabel de Lazo (06-10) dio todos sus datos,
+    // el cierre automatico la mando a la cola y ella nunca habia pagado. Solo
+    // el webhook del comprobante, la foto del comprobante y el contra entrega
+    // entran a la cola; el texto del bot no (soloConComprobante).
+    if (
+      args.soloConComprobante &&
+      patch.payment_status === 'Por confirmar' &&
+      !/contra\s*entrega/i.test(effectiveMethod)
+    ) {
+      if (estadoActual.includes('confirmar') || estadoActual.includes('pagad')) {
+        delete patch.payment_status
+      } else {
+        patch.payment_status = 'Pendiente'
+      }
+      console.warn(
+        `[deal-updates] deal ${(deal as { id: string }).id}: ${effectiveMethod || 'sin forma de pago'} sin comprobante, se queda en Pendiente`,
+      )
+    }
 
     // CANDADO: sin nombre del cliente el pedido NO entra a la cola de
     // confirmacion. Sin nombre no se puede rotular la guia de Cargo
