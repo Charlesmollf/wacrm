@@ -7,6 +7,7 @@ import { isBusinessHoursGT, runPipelineTimers } from '@/lib/crm/pipeline-timers'
 import { runLeadFollowups } from '@/lib/crm/lead-followup'
 import { avisarGuiasPendientes } from '@/lib/shipping/avisar-guia'
 import { reconcileCapiPurchases } from '@/lib/crm/capi-reconcile'
+import { reconcileSheetPushes } from '@/lib/sheets/reconcile-sheet'
 
 export const maxDuration = 60
 
@@ -74,6 +75,13 @@ export async function GET(request: Request) {
     console.error('[cron/tick] capi reconcile failed:', e)
   }
 
+  let sheetReconcile: unknown = null
+  try {
+    sheetReconcile = await reconcileSheetPushes(admin)
+  } catch (e) {
+    console.error('[cron/tick] sheet reconcile failed:', e)
+  }
+
   // Las difusiones programadas corren aunque sea fuera del horario
   // habil: la hora la eligio el duenio a proposito (ej. sabado 8am).
   // El horario habil frena los mensajes automaticos del bot, no una
@@ -91,6 +99,7 @@ export async function GET(request: Request) {
       deferred: true,
       timers,
       capiReconcile,
+      sheetReconcile,
       processed: 0,
       broadcastsSent,
     })
@@ -160,6 +169,7 @@ export async function GET(request: Request) {
     broadcastsSent,
     timers,
     capiReconcile,
+    sheetReconcile,
     followups,
     avisosGuia,
   })
