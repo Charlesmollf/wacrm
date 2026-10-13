@@ -424,6 +424,35 @@ export async function dispatchInboundImageToAiReply(
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
+    // Seguro: si el bot reconocio un comprobante pero olvido la marca
+    // estado_pago, el pedido (transferencia/deposito, con total) pasa solo a
+    // "Por confirmar". Gilda Ortiz (13-10) mando la foto y quedo Pendiente.
+    if (/comprobante/i.test(cleanText || deal.cleanText || '')) {
+      try {
+        const { data: d } = await db
+          .from('deals')
+          .select('payment_status, payment_method, value')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const st = String(d?.payment_status || '').toLowerCase()
+        const pm = String(d?.payment_method || '').toLowerCase()
+        if (
+          d &&
+          Number(d.value) > 0 &&
+          !st.includes('pagad') &&
+          !st.includes('confirmar') &&
+          (pm.includes('transfer') || pm.includes('dep'))
+        ) {
+          await applyDealUpdates(db, { accountId, contactId }, { payment_status: 'Por confirmar' })
+        }
+      } catch (e) {
+        console.error('[image-reply] flag comprobante failed:', e)
+      }
+    }
+
     const finalText = enforceBankAccount(
       stripInternalMarkers(cleanText || deal.cleanText || ''),
     )
