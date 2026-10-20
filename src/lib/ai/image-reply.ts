@@ -173,6 +173,7 @@ export async function dispatchInboundImageToAiReply(
     // fuera la primera vez y reiniciaba la venta. Ahora carga lo mismo
     // que el camino de texto: la conversación previa y el pedido vigente.
     let orderContext = ''
+    let pendientePago = false
     try {
       const { data: lastDeal } = await db
         .from('deals')
@@ -184,6 +185,12 @@ export async function dispatchInboundImageToAiReply(
         .maybeSingle()
       const estado = String(lastDeal?.payment_status || '').toLowerCase()
       postSale = estado.includes('pagad')
+      pendientePago =
+        !!lastDeal &&
+        Number(lastDeal.value) > 0 &&
+        !estado.includes('pagad') &&
+        !estado.includes('confirmar') &&
+        !/contra\s*entrega/i.test(String(lastDeal.payment_method ?? ''))
       if (lastDeal && (lastDeal.value || lastDeal.payment_status)) {
         const lastCombo =
           (lastDeal.combo_history || '').trim().split('\n').pop() || '—'
@@ -196,6 +203,22 @@ export async function dispatchInboundImageToAiReply(
       }
     } catch {
       // best-effort
+    }
+
+    // Pedido pendiente de pago + imagen: el modelo VE la imagen y decide si es
+    // una boleta. No se toma toda foto como pago (puede ser una bolsa de cafe,
+    // un sticker). Nanci Franco (14-10) mando su boleta y quedo Pendiente.
+    if (pendientePago && !postSale) {
+      orderContext +=
+        `\n\n[VERIFICACION DE COMPROBANTE] Este cliente tiene un pedido PENDIENTE DE PAGO. ` +
+        `Mira bien la imagen: ¿es un COMPROBANTE de pago (boleta, captura de transferencia, ` +
+        `deposito o voucher bancario con monto)? ` +
+        `Si SI lo es: confirmale que lo recibiste y termina tu mensaje con la marca [[BOLETA: SI]]. ` +
+        `Si NO lo es (foto de cafe, sticker, emoji, captura de otra cosa, imagen borrosa que no deja ` +
+        `ver un pago): NO digas que recibiste comprobante, NO pongas estado_pago, y pidele ` +
+        `EXPLICITAMENTE que te envie la foto o captura de su boleta de transferencia o deposito; ` +
+        `termina con la marca [[BOLETA: NO]]. Responde a lo que muestre la imagen si hace falta, ` +
+        `pero siempre pide la boleta.`
     }
 
     // PREFIJO ESTABLE (se cachea): persona + la instruccion de imagen +
@@ -422,34 +445,22 @@ export async function dispatchInboundImageToAiReply(
     }
 
     const { cleanText, images } = extractImageMarkers(deal.cleanText)
+
+    // La vision del modelo decide si la imagen es una boleta ([[BOLETA: SI/NO]]).
+    // SI -> el pedido pendiente pasa a "Por confirmar" (cola de verificacion
+    // humana). NO -> nunca pasa, aunque el modelo se haya equivocado en el SET.
+    const marcaBoleta = text.match(/\[\[\s*BOLETA\s*:\s*(SI|SÍ|NO)\s*\]\]/i)
+    const boleta = marcaBoleta ? (marcaBoleta[1].toUpperCase().startsWith('S') ? 'si' : 'no') : null
+    if (boleta === 'no' && /confirmar/i.test(deal.updates.payment_status ?? '')) {
+      delete deal.updates.payment_status
+    }
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
-    // Seguro: si el bot reconocio un comprobante pero olvido la marca
-    // estado_pago, el pedido (transferencia/deposito, con total) pasa solo a
-    // "Por confirmar". Gilda Ortiz (13-10) mando la foto y quedo Pendiente.
-    if (/comprobante/i.test(cleanText || deal.cleanText || '')) {
+    if (boleta === 'si' && pendientePago) {
       try {
-        const { data: d } = await db
-          .from('deals')
-          .select('payment_status, payment_method, value')
-          .eq('account_id', accountId)
-          .eq('contact_id', contactId)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        const st = String(d?.payment_status || '').toLowerCase()
-        const pm = String(d?.payment_method || '').toLowerCase()
-        if (
-          d &&
-          Number(d.value) > 0 &&
-          !st.includes('pagad') &&
-          !st.includes('confirmar') &&
-          (pm.includes('transfer') || pm.includes('dep'))
-        ) {
-          await applyDealUpdates(db, { accountId, contactId }, { payment_status: 'Por confirmar' })
-        }
+        await applyDealUpdates(db, { accountId, contactId }, { payment_status: 'Por confirmar' })
       } catch (e) {
-        console.error('[image-reply] flag comprobante failed:', e)
+        console.error('[image-reply] flag boleta failed:', e)
       }
     }
 
