@@ -312,7 +312,7 @@ export async function applyDealUpdates(
     const { data: deal } = await db
       .from('deals')
       .select(
-        'id, combo_history, sold_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at, value',
+        'id, combo_history, sold_at, created_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at, value, address, grind',
       )
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
@@ -372,7 +372,22 @@ export async function applyDealUpdates(
       Number.isFinite(totalEntrante) &&
       Number.isFinite(totalGuardado) &&
       Math.abs(totalEntrante - totalGuardado) >= 0.01
-    const esPedidoNuevo = yaPagado && (cambioElProducto || cambioElTotal)
+    // Venta pagada de hace mas de 7 dias + el bot manda un total (solo lo hace
+    // cuando el cliente confirma una compra): es una compra NUEVA aunque
+    // producto y monto sean identicos. Yuri Cardona (20-10) repitio sus 4
+    // Pacamara (Q525, igual a agosto) y el deal siguio "Pagado" con la guia vieja.
+    const baseVenta =
+      (deal as { sold_at?: string | null }).sold_at ||
+      (deal as { created_at?: string | null }).created_at
+    const edadVentaDias = baseVenta
+      ? (Date.now() - new Date(baseVenta).getTime()) / 86_400_000
+      : 999
+    const ventaVieja = yaPagado && edadVentaDias > 7
+    const esPedidoNuevo =
+      yaPagado &&
+      (cambioElProducto ||
+        cambioElTotal ||
+        (ventaVieja && Number.isFinite(totalEntrante) && totalEntrante > 0))
     if (yaPagado && !esPedidoNuevo && (updates.total || updates.combo)) {
       console.log(
         `[deal-updates] deal ${(deal as { id: string }).id}: mismo producto y mismo total que el pedido pagado, no es compra nueva`,
@@ -397,9 +412,28 @@ export async function applyDealUpdates(
           // Pedido NUEVO: se borra la marca del anterior para que este si
           // pueda avisar cuando le toque entrar a la cola.
           patch.confirm_requested_at = null
+          // La guia vieja era de la compra anterior.
+          patch.tracking_number = null
         } else if (!prevSold) {
           patch.sold_at = new Date().toISOString()
         }
+      }
+    }
+
+    // Producto distinto sobre un deal ya Pagado SIN total en este mensaje:
+    // tambien es compra nueva. Carmelo Mayen (19-10): el bot anoto "Colosos"
+    // sobre su Mitico de julio sin mandar total; cuando llego el total era
+    // Q390, igual al viejo, y el estado se quedo "Pagado" — nunca entro a
+    // Confirmar pagos ni a la hoja. Se compara el nombre base (sin "(molido)").
+    if (yaPagado && updates.combo && !updates.total && comboGuardado) {
+      const base = (t: string) => normalizar(t).replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
+      const a1 = base(updates.combo)
+      const b1 = base(comboGuardado)
+      if (a1 && b1 && !a1.includes(b1) && !b1.includes(a1)) {
+        if (!updates.payment_status) patch.payment_status = 'Pendiente'
+        patch.sold_at = new Date().toISOString()
+        patch.confirm_requested_at = null
+        patch.tracking_number = null
       }
     }
 
