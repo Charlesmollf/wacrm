@@ -129,6 +129,48 @@ export async function dispatchInboundToAiReply(
       return
     }
 
+    // Pedido ya con guia (<= 15 dias): el bot NO contesta, solo avisa a un
+    // humano. Leana Alvarado (19-10): el bot no sabia que la guia existia, le
+    // dijo que "se mando por error" y le reenvio el link de un pedido pagado.
+    // Los "gracias" sueltos no avisan: no hay nada que atender.
+    try {
+      const { data: envio } = await db
+        .from('deals')
+        .select('tracking_number, sold_at, created_at')
+        .eq('account_id', accountId)
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const base = envio?.sold_at || envio?.created_at
+      const edadDias = base ? (Date.now() - new Date(base).getTime()) / 86_400_000 : 999
+      if (envio?.tracking_number && edadDias <= 15) {
+        const { data: ult } = await db
+          .from('messages')
+          .select('content_text')
+          .eq('conversation_id', conversationId)
+          .eq('sender_type', 'customer')
+          .order('received_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const txt = String(ult?.content_text ?? '').trim()
+        const soloAgradece =
+          !/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(txt) ||
+          /^(muchas\s+)?(gracias|ok|okey|listo|perfecto|excelente|bendiciones|de nada)\b[^a-zA-Z]{0,12}$/i.test(txt)
+        if (!soloAgradece) {
+          void notifyHumanNeeded(db, {
+            accountId,
+            conversationId,
+            contactId,
+            preview: `Cliente con pedido ya enviado (guia ${envio.tracking_number}) escribio: "${txt.slice(0, 200)}". El bot no contesto.`,
+          })
+        }
+        return
+      }
+    } catch (e) {
+      console.error('[ai auto-reply] chequeo de pedido enviado fallo:', e)
+    }
+
     const messages = await buildConversationContext(db, conversationId)
     if (messages.length === 0) return
 
