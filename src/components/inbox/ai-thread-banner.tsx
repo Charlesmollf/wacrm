@@ -156,8 +156,23 @@ export function AiThreadBanner({
     );
   }
 
-  // Active, but a human already owns it → the bot won't fire; no banner.
-  if (assignedAgentId) return null;
+  // Active, but a human owns it → the bot stays silent. Antes no mostraba
+  // nada y no habia forma de devolverselo al bot (Moises Lucero, 10-11).
+  // "Devolver al bot" desasigna, reinicia el conteo y activa la IA.
+  if (assignedAgentId) {
+    return (
+      <Banner tone="muted">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-foreground">
+            Chat asignado a una persona: el bot no responde aquí
+          </p>
+        </div>
+        <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>
+          Devolver al bot
+        </BannerButton>
+      </Banner>
+    );
+  }
 
   // Active on this thread.
   return (
