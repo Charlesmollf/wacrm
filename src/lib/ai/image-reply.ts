@@ -454,6 +454,13 @@ export async function dispatchInboundImageToAiReply(
     if (boleta === 'no' && /confirmar/i.test(deal.updates.payment_status ?? '')) {
       delete deal.updates.payment_status
     }
+    // Una foto NUNCA deja un pedido en "Pagado": solo el dueño confirma pagos.
+    // Luis Pinto (10-11): el modelo puso estado_pago=Pagado al ver el voucher,
+    // se guardo primero y el "Por confirmar" de abajo quedo bloqueado (un deal
+    // Pagado no vuelve atras). Con pedido pendiente se descarta ese estado.
+    if (pendientePago && /pagad/i.test(deal.updates.payment_status ?? '')) {
+      delete deal.updates.payment_status
+    }
     await applyDealUpdates(db, { accountId, contactId }, deal.updates)
 
     if (boleta === 'si' && pendientePago) {
