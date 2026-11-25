@@ -78,7 +78,7 @@ export async function runLeadFollowups(db: SupabaseClient): Promise<FollowupResu
 
     const { data: leadDeals } = await db
       .from('deals')
-      .select('account_id, contact_id')
+      .select('account_id, contact_id, comprobante_recibido_at, payment_status')
       .in('stage_id', stageIds)
       .not('contact_id', 'is', null)
       .limit(2000)
@@ -87,6 +87,10 @@ export async function runLeadFollowups(db: SupabaseClient): Promise<FollowupResu
     // Agrupar por cuenta.
     const byAccount = new Map<string, Set<string>>()
     for (const d of leadDeals) {
+      // Quien ya mando comprobante (o ya esta en cola/pagado) no recibe
+      // seguimiento de venta (caso Ruth Rodas, 25-11).
+      const est = String(d.payment_status ?? '').toLowerCase()
+      if (d.comprobante_recibido_at || est.includes('confirmar') || est.includes('pagad')) continue
       const acct = d.account_id as string
       const cid = d.contact_id as string
       if (!byAccount.has(acct)) byAccount.set(acct, new Set())
