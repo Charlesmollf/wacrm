@@ -450,7 +450,17 @@ export async function dispatchInboundImageToAiReply(
     // SI -> el pedido pendiente pasa a "Por confirmar" (cola de verificacion
     // humana). NO -> nunca pasa, aunque el modelo se haya equivocado en el SET.
     const marcaBoleta = text.match(/\[\[\s*BOLETA\s*:\s*(SI|SÍ|NO)\s*\]\]/i)
-    const boleta = marcaBoleta ? (marcaBoleta[1].toUpperCase().startsWith('S') ? 'si' : 'no') : null
+    let boleta: 'si' | 'no' | null = marcaBoleta
+      ? marcaBoleta[1].toUpperCase().startsWith('S') ? 'si' : 'no'
+      : null
+    // Si el modelo olvido la marca pero SU PROPIA respuesta dice que recibio el
+    // comprobante, cuenta como SI. Silvia de Mansilla y Jose Ramiro (23/24-nov)
+    // mandaron boleta, el bot contesto "Recibi su comprobante" y el pedido se
+    // quedo en Pendiente porque faltaba la marca.
+    if (boleta === null && pendientePago && /recib\w*\s+(su|tu|el)\s+comprobante|comprobante\s+recibido/i.test(deal.cleanText ?? '')) {
+      boleta = 'si'
+      console.warn('[image-reply] sin marca BOLETA pero el texto dice que recibio el comprobante: se toma como SI')
+    }
     if (boleta === 'no' && /confirmar/i.test(deal.updates.payment_status ?? '')) {
       delete deal.updates.payment_status
     }
