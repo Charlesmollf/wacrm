@@ -26,7 +26,20 @@ export async function ensureImageHeaderHandle(
   if (payload.header_handle) return // already have one
   if (!payload.header_media_url) return // validator already requires url-or-handle
 
-  const appId = process.env.META_APP_ID
+  let appId = process.env.META_APP_ID
+  if (!appId) {
+    // Sin META_APP_ID en el entorno: el app id se saca del propio token
+    // (Graph debug_token). Evita depender de una variable de entorno.
+    try {
+      const dbg = await fetch(
+        `https://graph.facebook.com/debug_token?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`,
+      )
+      const j = (await dbg.json()) as { data?: { app_id?: string } }
+      if (j?.data?.app_id) appId = String(j.data.app_id)
+    } catch {
+      // cae al error de abajo
+    }
+  }
   if (!appId) {
     throw new Error(
       'Image-header templates need META_APP_ID set (used for Meta’s Resumable Upload). Add it to your environment, or remove the image header.',
