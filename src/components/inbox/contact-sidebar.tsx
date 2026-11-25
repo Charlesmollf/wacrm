@@ -331,19 +331,26 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                       <option value="Transferencia">Transferencia</option>
                       <option value="Contra entrega">Contra entrega</option>
                     </select>
-                    <select
-                      value={pStatus}
-                      onChange={(e) => {
-                        setPStatus(e.target.value);
-                        saveDealField({ payment_status: e.target.value || null });
-                      }}
-                      className="h-8 w-full rounded-lg border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary"
-                    >
-                      <option value="">Estado</option>
-                      <option value="Pendiente">Pendiente</option>
-                      <option value="Por confirmar">Por confirmar</option>
-                      <option value="Pagado">Pagado</option>
-                    </select>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {["Pendiente", "Por confirmar", "Pagado"].map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        onClick={() => {
+                          setPStatus(st);
+                          saveDealField({ payment_status: st });
+                        }}
+                        className={cn(
+                          "h-8 rounded-lg border px-1 text-[11px] font-medium transition-colors",
+                          pStatus === st
+                            ? "border-primary bg-primary/15 text-foreground"
+                            : "border-border bg-muted text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {st}
+                      </button>
+                    ))}
                   </div>
                   <select
                     value={grind}
