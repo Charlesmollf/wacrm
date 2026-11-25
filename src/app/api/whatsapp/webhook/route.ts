@@ -1014,6 +1014,12 @@ async function processMessage(
         // sin producto ni dirección). Se deja en negociación hasta que el
         // pedido tenga total.
         if (deal && dealValue > 0 && !st.includes('pagad') && !st.includes('confirmar')) {
+          // Se guarda que el comprobante llego aunque los candados frenen el
+          // estado (Ruth Rodas: el voucher llego antes que los datos).
+          await db
+            .from('deals')
+            .update({ comprobante_recibido_at: new Date().toISOString() })
+            .eq('id', (deal as { id: string }).id)
           await applyDealUpdates(
             db,
             { accountId, contactId: contactRecord.id },
