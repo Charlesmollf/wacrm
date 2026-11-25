@@ -312,7 +312,7 @@ export async function applyDealUpdates(
     const { data: deal } = await db
       .from('deals')
       .select(
-        'id, combo_history, sold_at, created_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at, value, address, grind',
+        'id, combo_history, sold_at, created_at, payment_status, payment_method, stage_id, pipeline_id, confirm_requested_at, comprobante_recibido_at, value, address, grind',
       )
       .eq('account_id', accountId)
       .eq('contact_id', contactId)
@@ -412,6 +412,7 @@ export async function applyDealUpdates(
           // Pedido NUEVO: se borra la marca del anterior para que este si
           // pueda avisar cuando le toque entrar a la cola.
           patch.confirm_requested_at = null
+          patch.comprobante_recibido_at = null
           // La guia vieja era de la compra anterior.
           patch.tracking_number = null
         } else if (!prevSold) {
@@ -433,6 +434,7 @@ export async function applyDealUpdates(
         if (!updates.payment_status) patch.payment_status = 'Pendiente'
         patch.sold_at = new Date().toISOString()
         patch.confirm_requested_at = null
+        patch.comprobante_recibido_at = null
         patch.tracking_number = null
       }
     }
@@ -532,8 +534,12 @@ export async function applyDealUpdates(
     // el cierre automatico la mando a la cola y ella nunca habia pagado. Solo
     // el webhook del comprobante, la foto del comprobante y el contra entrega
     // entran a la cola; el texto del bot no (soloConComprobante).
+    // Si el comprobante ya llego antes (Ruth Rodas 24-11: pago el voucher y
+    // despues dio los datos), el candado no aplica: `comprobante_recibido_at`.
+    const comprobanteYaLlego = !!(deal as { comprobante_recibido_at?: string | null }).comprobante_recibido_at
     if (
       args.soloConComprobante &&
+      !comprobanteYaLlego &&
       patch.payment_status === 'Por confirmar' &&
       !/contra\s*entrega/i.test(effectiveMethod)
     ) {

@@ -471,7 +471,29 @@ export async function dispatchInboundImageToAiReply(
     if (pendientePago && /pagad/i.test(deal.updates.payment_status ?? '')) {
       delete deal.updates.payment_status
     }
-    await applyDealUpdates(db, { accountId, contactId }, deal.updates)
+    // Boleta SI: se guarda que el comprobante llego, aunque los candados frenen
+    // el cambio de estado (falta nombre/direccion). Asi, cuando lleguen los
+    // datos, el pedido entra solo a "Por confirmar".
+    if (boleta === 'si' && pendientePago) {
+      try {
+        const { data: ultimo } = await db
+          .from('deals')
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (ultimo?.id) {
+          await db.from('deals').update({ comprobante_recibido_at: new Date().toISOString() }).eq('id', ultimo.id)
+        }
+      } catch (e) {
+        console.error('[image-reply] comprobante_recibido_at failed:', e)
+      }
+    }
+    // soloConComprobante: una foto que NO es boleta (producto, sticker) nunca
+    // dispara el cierre automatico a "Por confirmar" (caso javoo, 23-11).
+    await applyDealUpdates(db, { accountId, contactId, soloConComprobante: true }, deal.updates)
 
     if (boleta === 'si' && pendientePago) {
       try {
