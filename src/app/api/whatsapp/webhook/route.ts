@@ -1025,6 +1025,23 @@ async function processMessage(
             { accountId, contactId: contactRecord.id },
             { payment_status: 'Por confirmar' },
           )
+          // ALARMA: llego el comprobante pero el pedido no entro a la cola.
+          const { data: tras } = await db
+            .from('deals')
+            .select('payment_status')
+            .eq('id', (deal as { id: string }).id)
+            .maybeSingle()
+          const est = String(tras?.payment_status ?? '').toLowerCase()
+          if (!est.includes('confirmar') && !est.includes('pagad')) {
+            void notifyHumanNeeded(db, {
+              accountId,
+              conversationId: conversation.id,
+              contactId: contactRecord.id,
+              asunto: '💳 {cliente} mandó comprobante y el pedido NO quedó en Por confirmar',
+              motivo:
+                'El cliente envió un comprobante pero el pedido sigue en Pendiente (probable: faltan nombre o dirección). Cuando den los datos entrará solo; si no, pásalo a mano.',
+            })
+          }
         }
       } catch (err) {
         console.error('[comprobante] flag failed:', err)
