@@ -501,6 +501,31 @@ export async function dispatchInboundImageToAiReply(
       } catch (e) {
         console.error('[image-reply] flag boleta failed:', e)
       }
+      // ALARMA: llego la boleta pero el pedido no quedo en "Por confirmar"
+      // (falta nombre, direccion, etc.). Se avisa al dueño por correo.
+      try {
+        const { data: tras } = await db
+          .from('deals')
+          .select('payment_status, address, combo_history')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const est = String(tras?.payment_status ?? '').toLowerCase()
+        if (!est.includes('confirmar') && !est.includes('pagad')) {
+          void notifyHumanNeeded(db, {
+            accountId,
+            conversationId,
+            contactId,
+            asunto: '💳 {cliente} mandó su boleta y el pedido NO quedó en Por confirmar',
+            motivo:
+              'El cliente envió un comprobante pero el pedido sigue en Pendiente (probable: falta nombre, dirección o producto). Revísalo y pásalo a mano.',
+          })
+        }
+      } catch (e) {
+        console.error('[image-reply] alarma boleta failed:', e)
+      }
     }
 
     const finalText = enforceBankAccount(
