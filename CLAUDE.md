@@ -47,6 +47,13 @@ CRM de WhatsApp (Next.js + Supabase). **El catálogo, los precios y las reglas d
   + volátil. El prefijo debe ser idéntico byte por byte: cualquier dato variable va DESPUÉS.
   Verificación: `GET /api/ai/cache-check` (admin) — la 2ª llamada debe leer del caché.
 
+### WhatsApp por QR (seguros)
+
+Cuentas **sin** fila en `whatsapp_config` pueden conectarse por QR (Baileys, no oficial):
+`lib/whatsapp-qr/`, tablas `wa_qr_*` (migración 046). Solo lectura y respuesta manual, sin bot.
+Interruptor: env `WHATSAPP_QR_ENABLED=true` (apagado = todo sigue igual). Keepalive:
+pg_cron `wa-qr-keepalive` → `/api/whatsapp-qr/tick`.
+
 ## 4. Relojería
 
 `pg_cron` dentro de Supabase llama a `/api/cron/tick?token=` (token en `app_cron_auth`).

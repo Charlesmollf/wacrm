@@ -64,6 +64,9 @@ const SECURITY_HEADERS = [
 ] as const;
 
 const nextConfig: NextConfig = {
+  // WhatsApp por QR: estas librerías se cargan desde node_modules, sin empaquetar.
+  serverExternalPackages: ['baileys', 'pino'],
+
   /**
    * Cache-Control policy.
    *

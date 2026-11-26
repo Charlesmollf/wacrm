@@ -12,6 +12,7 @@ import { ProfileForm } from '@/components/settings/profile-form';
 import { SecurityPanel } from '@/components/settings/security-panel';
 import { AppearancePanel } from '@/components/settings/appearance-panel';
 import { WhatsAppConfig } from '@/components/settings/whatsapp-config';
+import { WhatsAppQr } from '@/components/settings/whatsapp-qr';
 import { CapiConfig } from '@/components/settings/capi-config';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { QuickRepliesManager } from '@/components/settings/quick-replies-manager';
@@ -73,6 +74,7 @@ export default function SettingsPage() {
     appearance: <AppearancePanel />,
     whatsapp: (
       <div className="space-y-6">
+        <WhatsAppQr />
         <WhatsAppConfig />
         <CapiConfig />
       </div>

@@ -44,6 +44,7 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { cuentaUsaQr, enviarPorQr, type PayloadQr } from '@/lib/whatsapp-qr/outbox';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -245,6 +246,11 @@ export async function sendMessageToConversation(
       'Invalid phone number format',
       400
     );
+  }
+
+  // Cuentas conectadas por QR no tienen configuración de Meta.
+  if (await cuentaUsaQr(accountId)) {
+    return sendViaQr(db, accountId, contact, params);
   }
 
   // WhatsApp config, account-scoped.
@@ -518,6 +524,72 @@ export async function sendMessageToConversation(
   return { messageId: messageRecord.id, whatsappMessageId: waMessageId };
 }
 
+
+async function sendViaQr(
+  db: SupabaseClient,
+  accountId: string,
+  contact: { id: string; phone: string },
+  params: SendMessageParams
+): Promise<SendMessageResult> {
+  const { conversationId, messageType, contentText, mediaUrl, filename } = params;
+  if (messageType === 'template' || messageType === 'interactive') {
+    throw new SendMessageError(
+      'bad_request',
+      'Por QR solo se pueden enviar texto y archivos',
+      400
+    );
+  }
+
+  let sent: Awaited<ReturnType<typeof enviarPorQr>>;
+  try {
+    sent = await enviarPorQr(accountId, contact.phone, {
+      type: messageType as PayloadQr['type'],
+      text: contentText,
+      mediaUrl,
+      filename,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'No se pudo enviar';
+    throw new SendMessageError('meta_error', message, 502);
+  }
+
+  // La respuesta citada se guarda en el CRM; WhatsApp la recibe sin cita.
+  const { data: record, error } = await db
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      sender_type: 'agent',
+      content_type: messageType,
+      content_text: contentText ?? null,
+      media_url: mediaUrl || null,
+      message_id: sent.waMessageId,
+      status: sent.estado,
+      reply_to_message_id: params.replyToMessageId || null,
+    })
+    .select()
+    .single();
+  if (error) {
+    throw new SendMessageError(
+      'db_error',
+      `Mensaje enviado pero no se guardó: ${error.message}`,
+      500
+    );
+  }
+
+  const now = new Date().toISOString();
+  await db
+    .from('conversations')
+    .update({
+      last_message_text: contentText || `[${messageType}]`,
+      last_message_at: now,
+      last_outbound_at: now,
+      updated_at: now,
+    })
+    .eq('id', conversationId)
+    .eq('account_id', accountId);
+
+  return { messageId: record.id, whatsappMessageId: sent.waMessageId };
+}
 
 /**
  * Arma el texto de una plantilla para guardarlo en `messages.content_text`:

@@ -242,8 +242,24 @@ export function MessageThread({
     };
   }, []);
 
+  // Por QR (WhatsApp Web) no existe la ventana de 24 h de Meta.
+  const [usaQr, setUsaQr] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/whatsapp-qr/session")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled) setUsaQr(!!d?.active);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 24-hour session timer
   const sessionInfo = useMemo(() => {
+    if (usaQr) return { expired: false, remaining: "" };
     if (!messages.length) return { expired: false, remaining: "" };
 
     // Find last customer message
@@ -267,7 +283,7 @@ export function MessageThread({
         : tTimer("xmRemaining", { minutes: Math.floor(hoursLeft * 60) });
 
     return { expired, remaining };
-  }, [messages, tTimer]);
+  }, [messages, tTimer, usaQr]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to
   // depend on `onMessagesLoaded` — otherwise parent re-renders cause

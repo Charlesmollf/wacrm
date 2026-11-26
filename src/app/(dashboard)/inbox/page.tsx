@@ -194,6 +194,16 @@ export default function InboxPage() {
         .eq("account_id", accountId)
         .maybeSingle();
 
+      if (!data) {
+        // Cuenta sin API oficial: puede estar conectada por QR.
+        const res = await fetch("/api/whatsapp-qr/session").catch(() => null);
+        const qr = res?.ok ? await res.json() : null;
+        if (qr?.active) {
+          setWhatsappConnected(qr.status === "connected");
+          return;
+        }
+      }
+
       setWhatsappConnected(data?.status === "connected");
     };
 
